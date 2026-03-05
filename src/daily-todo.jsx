@@ -1,4 +1,27 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { createClient } from "@supabase/supabase-js";
+
+// ─── Supabase ─────────────────────────────────────────────────────────────────
+
+const SUPABASE_URL  = "https://ubqagpwrxcnwfegijnqz.supabase.co";
+const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVicWFncHdyeGNud2ZlZ2lqbnF6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI2ODg0NjUsImV4cCI6MjA4ODI2NDQ2NX0.zC67TTH17hQmwzzFWmy61Kju4nvBtC2KCDKq5LwgRoo";
+const sb = createClient(SUPABASE_URL, SUPABASE_ANON);
+
+// ─── User ID (no login — persisted in localStorage per device) ────────────────
+
+const USER_ID_KEY = "taskly:userId";
+
+function getOrCreateUserId() {
+  let id = localStorage.getItem(USER_ID_KEY);
+  if (!id) {
+    // Generate a random ID e.g. "usr_x7k2p9q1"
+    id = "usr_" + Math.random().toString(36).slice(2, 10);
+    localStorage.setItem(USER_ID_KEY, id);
+  }
+  return id;
+}
+
+const USER_ID = getOrCreateUserId();
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -21,7 +44,6 @@ const GREETINGS = ["Let's get things done ✦", "Make today count ✦", "You've 
 
 // ─── Date helpers ─────────────────────────────────────────────────────────────
 
-// Use LOCAL date parts to avoid UTC-shift bugs (e.g. UTC+8 rolling back a day)
 const toKey = (d) => {
   const y  = d.getFullYear();
   const m  = String(d.getMonth() + 1).padStart(2, "0");
@@ -37,10 +59,10 @@ const addDays = (key, n) => {
 };
 
 const formatDisplay = (key) => {
-  const d    = new Date(key + "T00:00:00");
-  const tk   = todayKey();
-  const yk   = addDays(tk, -1);
-  const tmk  = addDays(tk, 1);
+  const d   = new Date(key + "T00:00:00");
+  const tk  = todayKey();
+  const yk  = addDays(tk, -1);
+  const tmk = addDays(tk, 1);
   if (key === tk)  return { label: "Today",     sub: d.toLocaleDateString("en-US", { weekday:"long", month:"long", day:"numeric", year:"numeric" }) };
   if (key === yk)  return { label: "Yesterday", sub: d.toLocaleDateString("en-US", { weekday:"long", month:"long", day:"numeric", year:"numeric" }) };
   if (key === tmk) return { label: "Tomorrow",  sub: d.toLocaleDateString("en-US", { weekday:"long", month:"long", day:"numeric", year:"numeric" }) };
@@ -50,24 +72,78 @@ const formatDisplay = (key) => {
   };
 };
 
-// ─── Storage ──────────────────────────────────────────────────────────────────
+// ─── Supabase helpers ─────────────────────────────────────────────────────────
 
-const NS = "taskly:";
+// Row shape: { id, user_id, date_key, text, status, priority, rolled_from, created_at }
 
-const loadDay  = (key) => { try { return JSON.parse(localStorage.getItem(NS + key)) || []; } catch { return []; } };
-const saveDay  = (key, tasks) => { try { localStorage.setItem(NS + key, JSON.stringify(tasks)); } catch {} };
-const allKeys  = () => Object.keys(localStorage).filter(k => k.startsWith(NS)).map(k => k.slice(NS.length)).sort().reverse();
+const dbToTask = (row) => ({
+  id:         row.id,
+  text:       row.text,
+  status:     row.status,
+  priority:   row.priority,
+  rolledFrom: row.rolled_from || null,
+  createdAt:  row.created_at,
+});
+
+const taskToDb = (task, dateKey) => ({
+  id:          task.id,
+  user_id:     USER_ID,
+  date_key:    dateKey,
+  text:        task.text,
+  status:      task.status,
+  priority:    task.priority || "medium",
+  rolled_from: task.rolledFrom || null,
+  created_at:  task.createdAt,
+});
+
+async function fetchDay(dateKey) {
+  const { data, error } = await sb
+    .from("tasks")
+    .select("*")
+    .eq("user_id", USER_ID)
+    .eq("date_key", dateKey)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data || []).map(dbToTask);
+}
+
+async function fetchAllDateKeys() {
+  const { data, error } = await sb
+    .from("tasks")
+    .select("date_key")
+    .eq("user_id", USER_ID);
+  if (error) throw error;
+  const unique = [...new Set((data || []).map(r => r.date_key))].sort().reverse();
+  return unique;
+}
+
+async function upsertTask(task, dateKey) {
+  const { error } = await sb.from("tasks").upsert(taskToDb(task, dateKey));
+  if (error) throw error;
+}
+
+async function deleteTask(id) {
+  const { error } = await sb.from("tasks").delete().eq("id", id).eq("user_id", USER_ID);
+  if (error) throw error;
+}
+
+async function upsertMany(tasks, dateKey) {
+  if (!tasks.length) return;
+  const { error } = await sb.from("tasks").upsert(tasks.map(t => taskToDb(t, dateKey)));
+  if (error) throw error;
+}
 
 // ─── ID gen ───────────────────────────────────────────────────────────────────
 
-let _id = Date.now();
-const uid = () => `t${++_id}`;
+const uid = () => `t${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 
 export default function App() {
   const [dateKey, setDateKey]         = useState(todayKey);
-  const [tasks, setTasksRaw]          = useState(() => loadDay(todayKey()));
+  const [tasks, setTasks]             = useState([]);
+  const [loading, setLoading]         = useState(true);
+  const [saving, setSaving]           = useState(false);
   const [input, setInput]             = useState("");
   const [priority, setPriority]       = useState("medium");
   const [filter, setFilter]           = useState("all");
@@ -78,64 +154,122 @@ export default function App() {
   const [confirmId, setConfirmId]     = useState(null);
   const [showEndDay, setShowEndDay]   = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [historyKeys, setHistoryKeys] = useState([]);
+  const [error, setError]             = useState(null);
   const inputRef = useRef();
 
-  // Persist on every tasks change
-  const setTasks = (fn) => {
-    setTasksRaw(prev => {
-      const next = typeof fn === "function" ? fn(prev) : fn;
-      saveDay(dateKey, next);
-      return next;
-    });
-  };
-
-  // Reload when date changes
+  // Load tasks when date changes
   useEffect(() => {
-    setTasksRaw(loadDay(dateKey));
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
     setFilter("all");
     setSearch("");
     setEditId(null);
     setConfirmId(null);
     setShowEndDay(false);
+
+    fetchDay(dateKey)
+      .then(t => { if (!cancelled) { setTasks(t); setLoading(false); } })
+      .catch(e => { if (!cancelled) { setError(e.message); setLoading(false); } });
+
+    return () => { cancelled = true; };
   }, [dateKey]);
 
+  // Load history keys on mount and after end day
+  const refreshHistory = useCallback(() => {
+    fetchAllDateKeys().then(setHistoryKeys).catch(() => {});
+  }, []);
+
+  useEffect(() => { refreshHistory(); }, [refreshHistory]);
+
   const isToday    = dateKey === todayKey();
-  const isFuture   = dateKey > todayKey();
   const isPast     = dateKey < todayKey();
   const isReadOnly = isPast;
 
   // ── CRUD ──
-  const add = () => {
+  const add = async () => {
     const text = input.trim();
     if (!text || isReadOnly) { inputRef.current?.focus(); return; }
-    setTasks(p => [{ id: uid(), text, status: "todo", priority, createdAt: Date.now() }, ...p]);
+    const task = { id: uid(), text, status: "todo", priority, createdAt: Date.now() };
+    setTasks(p => [task, ...p]);
     setInput("");
     setPriority("medium");
+    setSaving(true);
+    try {
+      await upsertTask(task, dateKey);
+      refreshHistory();
+    } catch (e) {
+      setError(e.message);
+      setTasks(p => p.filter(t => t.id !== task.id)); // rollback
+    } finally { setSaving(false); }
   };
 
-  const setStatus  = (id, status) => setTasks(p => p.map(t => t.id === id ? { ...t, status } : t));
-  const setPrio    = (id, prio)   => setTasks(p => p.map(t => t.id === id ? { ...t, priority: prio } : t));
-  const del        = (id)         => { setTasks(p => p.filter(t => t.id !== id)); setConfirmId(null); };
-  const commitEdit = (id)         => {
+  const setStatus = async (id, status) => {
+    setTasks(p => p.map(t => t.id === id ? { ...t, status } : t));
+    const task = tasks.find(t => t.id === id);
+    if (!task) return;
+    try { await upsertTask({ ...task, status }, dateKey); }
+    catch (e) {
+      setError(e.message);
+      setTasks(p => p.map(t => t.id === id ? { ...t, status: task.status } : t)); // rollback
+    }
+  };
+
+  const setPrio = async (id, prio) => {
+    setTasks(p => p.map(t => t.id === id ? { ...t, priority: prio } : t));
+    const task = tasks.find(t => t.id === id);
+    if (!task) return;
+    try { await upsertTask({ ...task, priority: prio }, dateKey); }
+    catch (e) { setError(e.message); setTasks(p => p.map(t => t.id === id ? { ...t, priority: task.priority } : t)); }
+  };
+
+  const del = async (id) => {
+    const task = tasks.find(t => t.id === id);
+    setTasks(p => p.filter(t => t.id !== id));
+    setConfirmId(null);
+    try { await deleteTask(id); }
+    catch (e) {
+      setError(e.message);
+      setTasks(p => [task, ...p]); // rollback
+    }
+  };
+
+  const commitEdit = async (id) => {
     const text = editText.trim();
-    if (text) setTasks(p => p.map(t => t.id === id ? { ...t, text } : t));
+    if (!text) { setEditId(null); return; }
+    const task = tasks.find(t => t.id === id);
+    setTasks(p => p.map(t => t.id === id ? { ...t, text } : t));
     setEditId(null);
+    try { await upsertTask({ ...task, text }, dateKey); }
+    catch (e) {
+      setError(e.message);
+      setTasks(p => p.map(t => t.id === id ? { ...t, text: task.text } : t));
+    }
   };
 
   // ── END DAY ──
-  const endDay = () => {
+  const endDay = async () => {
     const unfinished = tasks.filter(t => t.status !== "done");
-    if (!unfinished.length) { setShowEndDay(false); return; }
-    const tomorrow  = addDays(dateKey, 1);
-    const existing  = loadDay(tomorrow);
-    // Avoid duplicates (by id)
-    const existIds  = new Set(existing.map(t => t.id));
-    const toRoll    = unfinished
-      .filter(t => !existIds.has(t.id))
-      .map(t => ({ ...t, status: t.status === "blocked" ? "blocked" : "todo", rolledFrom: dateKey }));
-    saveDay(tomorrow, [...toRoll, ...existing]);
-    setShowEndDay(false);
-    setDateKey(tomorrow);
+    const tomorrow   = addDays(dateKey, 1);
+
+    setSaving(true);
+    try {
+      if (unfinished.length) {
+        // Fetch tomorrow's existing tasks to avoid duplicates
+        const existing = await fetchDay(tomorrow);
+        const existIds = new Set(existing.map(t => t.id));
+        const toRoll   = unfinished
+          .filter(t => !existIds.has(t.id))
+          .map(t => ({ ...t, status: t.status === "blocked" ? "blocked" : "todo", rolledFrom: dateKey }));
+        if (toRoll.length) await upsertMany(toRoll, tomorrow);
+      }
+      setShowEndDay(false);
+      refreshHistory();
+      setDateKey(tomorrow);
+    } catch (e) {
+      setError(e.message);
+    } finally { setSaving(false); }
   };
 
   // ── DERIVED ──
@@ -155,7 +289,7 @@ export default function App() {
 
   const { label: dayLabel, sub: daySub } = formatDisplay(dateKey);
   const greeting = GREETINGS[new Date(dateKey + "T00:00:00").getDay() % GREETINGS.length];
-  const historyKeys = allKeys().filter(k => k !== dateKey);
+  const sidebarHistoryKeys = historyKeys.filter(k => k !== dateKey);
 
   return (
     <div style={{ width:"100vw", height:"100vh", display:"flex", flexDirection:"column", background:"#080c14", overflow:"hidden", fontFamily:"'Plus Jakarta Sans', sans-serif", color:"#e2e8f0" }}>
@@ -180,6 +314,10 @@ export default function App() {
         .brand { margin-bottom:24px; }
         .brand-name { font-family:'Fraunces',Georgia,serif; font-size:22px; font-weight:700; color:#f8fafc; letter-spacing:-0.5px; line-height:1; }
         .brand-sub  { font-size:11px; color:#334155; letter-spacing:0.06em; text-transform:uppercase; margin-top:5px; }
+
+        .user-chip { display:flex; align-items:center; gap:6px; background:#131c2e; border-radius:6px; padding:6px 10px; margin-bottom:20px; }
+        .user-dot  { width:6px; height:6px; border-radius:50%; background:#86efac; flex-shrink:0; }
+        .user-id   { font-size:10px; color:#475569; letter-spacing:0.04em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
         .progress-section { margin-bottom:24px; }
         .progress-label { display:flex; justify-content:space-between; font-size:11px; color:#475569; text-transform:uppercase; letter-spacing:0.07em; margin-bottom:8px; }
@@ -207,24 +345,21 @@ export default function App() {
         .sort-toggle:hover  { color:#e2e8f0; background:#131c2e; }
         .sort-toggle.active { color:#fbbf24; background:#131c2e; border-color:#2a2010; }
 
-        /* ── END DAY BUTTON ── */
         .end-day-btn {
           display:flex; align-items:center; gap:8px; padding:10px 14px; border-radius:8px;
           font-size:13px; font-weight:600; cursor:pointer; border:1px solid rgba(251,191,36,0.25);
           background:rgba(251,191,36,0.06); color:#fbbf24; font-family:inherit;
           transition:all 0.15s; width:100%; margin-bottom:8px;
         }
-        .end-day-btn:hover { background:rgba(251,191,36,0.12); border-color:rgba(251,191,36,0.4); }
+        .end-day-btn:hover    { background:rgba(251,191,36,0.12); border-color:rgba(251,191,36,0.4); }
         .end-day-btn:disabled { opacity:0.3; cursor:not-allowed; }
 
-        /* ── HISTORY ── */
         .history-toggle {
           display:flex; align-items:center; gap:8px; padding:8px 10px; border-radius:7px;
           font-size:12px; color:#334155; cursor:pointer; border:none; background:none;
           text-align:left; transition:all 0.15s; width:100%; font-family:inherit;
         }
         .history-toggle:hover { color:#64748b; background:#131c2e; }
-
         .history-list { display:flex; flex-direction:column; gap:2px; margin-top:4px; max-height:180px; overflow-y:auto; }
         .history-item {
           display:flex; align-items:center; justify-content:space-between; padding:6px 10px; border-radius:6px;
@@ -233,7 +368,7 @@ export default function App() {
         }
         .history-item:hover  { color:#e2e8f0; background:#131c2e; }
         .history-item.active { color:#7dd3fc; background:#131c2e; }
-        .history-dot { font-size:9px; color:#334155; }
+        .history-badge { font-size:10px; color:#334155; background:#131c2e; padding:1px 6px; border-radius:10px; }
 
         .sidebar-footer { margin-top:auto; padding-top:16px; border-top:1px solid #131c2e; font-size:11px; color:#1e3a5f; text-align:center; letter-spacing:0.04em; }
 
@@ -246,22 +381,20 @@ export default function App() {
         .page-title { font-family:'Fraunces',Georgia,serif; font-size:28px; font-weight:700; color:#f8fafc; letter-spacing:-0.8px; line-height:1; }
         .page-sub   { font-size:12px; color:#334155; margin-top:4px; }
 
-        /* ── DATE NAV ── */
         .date-nav { display:flex; align-items:center; gap:8px; }
         .date-picker {
           background:#0c1220; border:1px solid #1e293b; border-radius:8px;
           padding:8px 12px; color:#e2e8f0; font-family:inherit; font-size:13px;
-          outline:none; cursor:pointer; transition:border-color 0.15s;
-          color-scheme: dark;
+          outline:none; cursor:pointer; transition:border-color 0.15s; color-scheme:dark;
         }
         .date-picker:focus { border-color:#7dd3fc; }
         .nav-btn {
           background:#0c1220; border:1px solid #1e293b; border-radius:6px;
-          padding:7px 11px; color:#64748b; font-family:inherit; font-size:12px;
-          cursor:pointer; transition:all 0.15s; line-height:1;
+          padding:7px 12px; color:#64748b; font-family:inherit; font-size:12px;
+          cursor:pointer; transition:all 0.15s; line-height:1; white-space:nowrap;
         }
-        .nav-btn:hover { color:#e2e8f0; border-color:#334155; }
-        .nav-btn.today-btn { color:#7dd3fc; border-color:rgba(125,211,252,0.25); background:rgba(125,211,252,0.06); }
+        .nav-btn:hover      { color:#e2e8f0; border-color:#334155; }
+        .nav-btn.today-btn  { color:#7dd3fc; border-color:rgba(125,211,252,0.25); background:rgba(125,211,252,0.06); }
         .nav-btn.today-btn:hover { background:rgba(125,211,252,0.12); }
 
         .search-wrap { position:relative; }
@@ -274,6 +407,10 @@ export default function App() {
         .search-input::placeholder { color:#2d3f57; }
         .search-icon { position:absolute; left:11px; top:50%; transform:translateY(-50%); color:#334155; font-size:14px; pointer-events:none; }
 
+        .saving-indicator { font-size:11px; color:#334155; display:flex; align-items:center; gap:5px; }
+        .saving-dot { width:5px; height:5px; border-radius:50%; background:#fbbf24; animation:pulse 1s infinite; }
+        @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
+
         /* ── ADD FORM ── */
         .input-row { display:flex; gap:10px; padding:12px 36px; border-bottom:1px solid #131c2e; flex-shrink:0; align-items:center; }
         .task-input {
@@ -281,17 +418,16 @@ export default function App() {
           padding:10px 16px; color:#e2e8f0; font-family:inherit; font-size:14px;
           outline:none; transition:border-color 0.15s; min-width:0;
         }
-        .task-input:focus   { border-color:#7dd3fc; }
+        .task-input:focus    { border-color:#7dd3fc; }
         .task-input::placeholder { color:#2d3f57; }
         .task-input:disabled { opacity:0.4; cursor:not-allowed; }
 
         .prio-select {
           appearance:none; -webkit-appearance:none;
           background:#0c1220; border:1px solid #1e293b; border-radius:8px;
-          padding:10px 14px; color:#e2e8f0; font-family:inherit; font-size:13px;
+          padding:10px 14px; font-family:inherit; font-size:13px;
           outline:none; cursor:pointer; transition:all 0.15s; flex-shrink:0;
         }
-        .prio-select:focus   { border-color:#7dd3fc; }
         .prio-select:disabled { opacity:0.4; cursor:not-allowed; }
 
         .add-btn {
@@ -309,8 +445,19 @@ export default function App() {
           font-size:12px; color:#f87171; flex-shrink:0;
         }
 
+        .error-banner {
+          display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 36px;
+          background:rgba(248,113,113,0.08); border-bottom:1px solid rgba(248,113,113,0.15);
+          font-size:12px; color:#f87171; flex-shrink:0;
+        }
+        .error-dismiss { background:none; border:none; color:#f87171; cursor:pointer; font-size:14px; padding:0; }
+
         /* ── TASK LIST ── */
         .task-area { flex:1; overflow-y:auto; padding:16px 36px 28px; }
+
+        .loading-state { text-align:center; padding:56px 20px; color:#2d3f57; font-size:13px; }
+        .loading-spin  { display:inline-block; width:20px; height:20px; border:2px solid #1e293b; border-top-color:#7dd3fc; border-radius:50%; animation:spin 0.7s linear infinite; margin-bottom:12px; }
+        @keyframes spin { to { transform:rotate(360deg); } }
 
         .group-label {
           font-size:10px; text-transform:uppercase; letter-spacing:0.1em;
@@ -326,10 +473,10 @@ export default function App() {
           transition:all 0.18s; animation:taskIn 0.2s ease both; position:relative;
         }
         @keyframes taskIn { from { opacity:0; transform:translateY(5px); } to { opacity:1; transform:translateY(0); } }
-        .task-card:hover         { border-color:#1e293b; background:#0f1825; transform:translateX(2px); }
-        .task-card.is-done       { opacity:0.42; }
-        .task-card.confirming    { border-color:rgba(248,113,113,0.35) !important; background:#110a0a !important; transform:none !important; }
-        .task-card.rolled        { border-left:2px solid rgba(251,191,36,0.4); }
+        .task-card:hover      { border-color:#1e293b; background:#0f1825; transform:translateX(2px); }
+        .task-card.is-done    { opacity:0.42; }
+        .task-card.confirming { border-color:rgba(248,113,113,0.35) !important; background:#110a0a !important; transform:none !important; }
+        .task-card.rolled     { border-left:2px solid rgba(251,191,36,0.4); }
 
         .rolled-tag { font-size:9px; color:#92400e; background:rgba(251,191,36,0.08); border-radius:4px; padding:1px 5px; white-space:nowrap; flex-shrink:0; }
 
@@ -350,7 +497,7 @@ export default function App() {
         }
         .p-badge-select:disabled { cursor:default; }
 
-        .task-text { flex:1; font-size:13px; color:#cbd5e1; line-height:1.45; min-width:0; }
+        .task-text      { flex:1; font-size:13px; color:#cbd5e1; line-height:1.45; min-width:0; }
         .task-text.done { text-decoration:line-through; color:#334155; }
 
         .edit-in {
@@ -366,23 +513,17 @@ export default function App() {
         .icon-btn.del:hover { color:#f87171; background:rgba(248,113,113,0.08); }
         .icon-btn:disabled  { opacity:0.2; cursor:not-allowed; }
 
-        .confirm-row { display:flex; align-items:center; gap:8px; margin-left:auto; flex-shrink:0; animation:fadeIn 0.15s ease; }
+        .confirm-row   { display:flex; align-items:center; gap:8px; margin-left:auto; flex-shrink:0; animation:fadeIn 0.15s ease; }
         @keyframes fadeIn { from { opacity:0; } to { opacity:1; } }
         .confirm-label { font-size:11px; color:#f87171; white-space:nowrap; }
-        .confirm-yes { background:rgba(248,113,113,0.15); border:1px solid rgba(248,113,113,0.35); border-radius:5px; padding:3px 10px; color:#f87171; font-family:inherit; font-size:11px; font-weight:600; cursor:pointer; transition:all 0.12s; }
+        .confirm-yes   { background:rgba(248,113,113,0.15); border:1px solid rgba(248,113,113,0.35); border-radius:5px; padding:3px 10px; color:#f87171; font-family:inherit; font-size:11px; font-weight:600; cursor:pointer; transition:all 0.12s; }
         .confirm-yes:hover { background:rgba(248,113,113,0.28); }
-        .confirm-no  { background:#131c2e; border:1px solid #1e293b; border-radius:5px; padding:3px 10px; color:#64748b; font-family:inherit; font-size:11px; cursor:pointer; transition:all 0.12s; }
+        .confirm-no    { background:#131c2e; border:1px solid #1e293b; border-radius:5px; padding:3px 10px; color:#64748b; font-family:inherit; font-size:11px; cursor:pointer; transition:all 0.12s; }
         .confirm-no:hover { color:#e2e8f0; }
 
         /* ── END DAY MODAL ── */
-        .modal-backdrop {
-          position:fixed; inset:0; background:rgba(0,0,0,0.7); display:flex;
-          align-items:center; justify-content:center; z-index:100; animation:fadeIn 0.2s ease;
-        }
-        .modal {
-          background:#0c1220; border:1px solid #1e293b; border-radius:14px;
-          padding:32px 36px; max-width:420px; width:90%; animation:modalIn 0.2s ease;
-        }
+        .modal-backdrop { position:fixed; inset:0; background:rgba(0,0,0,0.7); display:flex; align-items:center; justify-content:center; z-index:100; animation:fadeIn 0.2s ease; }
+        .modal { background:#0c1220; border:1px solid #1e293b; border-radius:14px; padding:32px 36px; max-width:420px; width:90%; animation:modalIn 0.2s ease; }
         @keyframes modalIn { from { opacity:0; transform:translateY(12px) scale(0.97); } to { opacity:1; transform:translateY(0) scale(1); } }
         .modal-title { font-family:'Fraunces',Georgia,serif; font-size:22px; font-weight:700; color:#f8fafc; margin-bottom:8px; }
         .modal-sub   { font-size:13px; color:#475569; margin-bottom:24px; line-height:1.6; }
@@ -390,18 +531,11 @@ export default function App() {
         .modal-stat-item { flex:1; background:#131c2e; border-radius:8px; padding:12px; text-align:center; }
         .modal-stat-num  { font-family:'Fraunces',Georgia,serif; font-size:26px; font-weight:700; line-height:1; }
         .modal-stat-lbl  { font-size:10px; color:#475569; text-transform:uppercase; letter-spacing:0.07em; margin-top:4px; }
-        .modal-actions { display:flex; gap:10px; }
-        .modal-confirm {
-          flex:1; background:linear-gradient(135deg,#fbbf24,#f59e0b); border:none; border-radius:8px;
-          padding:12px; color:#0c1220; font-family:inherit; font-size:14px; font-weight:600;
-          cursor:pointer; transition:all 0.15s;
-        }
-        .modal-confirm:hover { transform:translateY(-1px); box-shadow:0 4px 14px rgba(251,191,36,0.3); }
-        .modal-cancel {
-          background:#131c2e; border:1px solid #1e293b; border-radius:8px;
-          padding:12px 20px; color:#64748b; font-family:inherit; font-size:14px;
-          cursor:pointer; transition:all 0.15s;
-        }
+        .modal-actions   { display:flex; gap:10px; }
+        .modal-confirm   { flex:1; background:linear-gradient(135deg,#fbbf24,#f59e0b); border:none; border-radius:8px; padding:12px; color:#0c1220; font-family:inherit; font-size:14px; font-weight:600; cursor:pointer; transition:all 0.15s; }
+        .modal-confirm:hover    { transform:translateY(-1px); box-shadow:0 4px 14px rgba(251,191,36,0.3); }
+        .modal-confirm:disabled { opacity:0.5; cursor:not-allowed; transform:none; }
+        .modal-cancel    { background:#131c2e; border:1px solid #1e293b; border-radius:8px; padding:12px 20px; color:#64748b; font-family:inherit; font-size:14px; cursor:pointer; transition:all 0.15s; }
         .modal-cancel:hover { color:#e2e8f0; }
 
         .empty-state { text-align:center; padding:56px 20px; color:#1e293b; font-size:13px; letter-spacing:0.04em; }
@@ -415,7 +549,7 @@ export default function App() {
             <div className="modal-title">End Your Day</div>
             <div className="modal-sub">
               {unfinishedCount > 0
-                ? `You have ${unfinishedCount} unfinished task${unfinishedCount > 1 ? "s" : ""}. They'll be rolled over to tomorrow with their current status (Blocked tasks stay blocked, others reset to To Do).`
+                ? `You have ${unfinishedCount} unfinished task${unfinishedCount > 1 ? "s" : ""}. They'll be rolled over to tomorrow — Blocked tasks stay blocked, others reset to To Do.`
                 : "All tasks are done — amazing work today! 🎉"}
             </div>
             <div className="modal-stat">
@@ -433,8 +567,8 @@ export default function App() {
               </div>
             </div>
             <div className="modal-actions">
-              <button className="modal-confirm" onClick={endDay}>
-                {unfinishedCount > 0 ? "Roll Over & Go to Tomorrow →" : "Go to Tomorrow →"}
+              <button className="modal-confirm" disabled={saving} onClick={endDay}>
+                {saving ? "Saving..." : unfinishedCount > 0 ? "Roll Over & Go to Tomorrow →" : "Go to Tomorrow →"}
               </button>
               <button className="modal-cancel" onClick={() => setShowEndDay(false)}>Cancel</button>
             </div>
@@ -448,6 +582,12 @@ export default function App() {
           <div className="brand">
             <div className="brand-name">Taskly</div>
             <div className="brand-sub">Daily Planner</div>
+          </div>
+
+          {/* User ID chip */}
+          <div className="user-chip" title={`Your user ID: ${USER_ID}`}>
+            <span className="user-dot" />
+            <span className="user-id">{USER_ID}</span>
           </div>
 
           <div className="progress-section">
@@ -482,34 +622,32 @@ export default function App() {
             {sortByPriority && <span style={{ marginLeft:"auto", fontSize:10, color:"#fbbf24" }}>✓</span>}
           </button>
 
-          {/* End Day */}
           {isToday && (
             <>
               <div className="section-label">Day Actions</div>
-              <button className="end-day-btn" onClick={() => setShowEndDay(true)}>
+              <button className="end-day-btn" disabled={saving} onClick={() => setShowEndDay(true)}>
                 ✦ End My Day
               </button>
             </>
           )}
 
-          {/* History */}
-          {historyKeys.length > 0 && (
+          {sidebarHistoryKeys.length > 0 && (
             <>
               <div className="section-label" style={{ marginTop:8 }}>History</div>
               <button className="history-toggle" onClick={() => setShowHistory(v => !v)}>
-                {showHistory ? "▾" : "▸"} Past Days ({historyKeys.length})
+                {showHistory ? "▾" : "▸"} Past Days ({sidebarHistoryKeys.length})
               </button>
               {showHistory && (
                 <div className="history-list">
                   {!isToday && (
-                    <button className={`history-item ${dateKey === todayKey() ? "active" : ""}`} onClick={() => setDateKey(todayKey())}>
-                      Today <span className="history-dot">●</span>
+                    <button className="history-item" onClick={() => setDateKey(todayKey())}>
+                      Today <span className="history-badge">now</span>
                     </button>
                   )}
-                  {historyKeys.map(k => (
+                  {sidebarHistoryKeys.map(k => (
                     <button key={k} className={`history-item ${dateKey === k ? "active" : ""}`} onClick={() => setDateKey(k)}>
                       {new Date(k + "T00:00:00").toLocaleDateString("en-US", { month:"short", day:"numeric" })}
-                      <span className="history-dot">{loadDay(k).filter(t => t.status === "done").length}/{loadDay(k).length}</span>
+                      <span className="history-badge">{k}</span>
                     </button>
                   ))}
                 </div>
@@ -518,7 +656,7 @@ export default function App() {
           )}
 
           <div className="sidebar-footer">
-            {tasks.length === 0 ? "Add your first task →" : `${counts.done} of ${tasks.length} complete`}
+            {loading ? "Loading..." : tasks.length === 0 ? "Add your first task →" : `${counts.done} of ${tasks.length} complete`}
           </div>
         </aside>
 
@@ -531,6 +669,11 @@ export default function App() {
                 <div className="page-sub">{isToday ? greeting : daySub}</div>
               </div>
               <div style={{ display:"flex", gap:"10px", alignItems:"center", flexWrap:"wrap" }}>
+                {saving && (
+                  <div className="saving-indicator">
+                    <span className="saving-dot" /> Saving...
+                  </div>
+                )}
                 <div className="date-nav">
                   <input
                     type="date"
@@ -557,28 +700,33 @@ export default function App() {
             </div>
           </div>
 
-          {/* Read-only banner for past days */}
+          {error && (
+            <div className="error-banner">
+              ⚠ {error}
+              <button className="error-dismiss" onClick={() => setError(null)}>✕</button>
+            </div>
+          )}
+
           {isReadOnly && (
             <div className="readonly-banner">
               ⚠ Past day — view only. Navigate to today to add tasks.
             </div>
           )}
 
-          {/* Add form */}
           <div className="input-row">
             <input
               ref={inputRef}
               className="task-input"
               placeholder={isReadOnly ? "Past day — read only" : "What needs to be done today?"}
               value={input}
-              disabled={isReadOnly}
+              disabled={isReadOnly || loading}
               onChange={e => setInput(e.target.value)}
               onKeyDown={e => e.key === "Enter" && add()}
             />
             <select
               className="prio-select"
               value={priority}
-              disabled={isReadOnly}
+              disabled={isReadOnly || loading}
               onChange={e => setPriority(e.target.value)}
               style={{ color: PRIORITY_MAP[priority].color }}
             >
@@ -586,12 +734,16 @@ export default function App() {
                 <option key={p.key} value={p.key} style={{ color:p.color }}>{p.label} Priority</option>
               ))}
             </select>
-            <button className="add-btn" disabled={isReadOnly} onClick={add}>+ Add Task</button>
+            <button className="add-btn" disabled={isReadOnly || loading} onClick={add}>+ Add Task</button>
           </div>
 
-          {/* Task list */}
           <div className="task-area">
-            {visible.length === 0 && (
+            {loading ? (
+              <div className="loading-state">
+                <div className="loading-spin" />
+                <div>Loading tasks...</div>
+              </div>
+            ) : visible.length === 0 ? (
               <div className="empty-state">
                 <span className="empty-icon">✦</span>
                 {search ? "No tasks match your search."
@@ -599,9 +751,7 @@ export default function App() {
                     ? isReadOnly ? "No tasks recorded for this day." : "No tasks yet — add one above!"
                     : `No ${STATUS_MAP[filter]?.label} tasks.`}
               </div>
-            )}
-
-            {filter === "all" && !search && !sortByPriority
+            ) : filter === "all" && !search && !sortByPriority
               ? STATUSES.map(s => {
                   const group = visible.filter(t => t.status === s.key);
                   if (!group.length) return null;
@@ -637,10 +787,10 @@ export default function App() {
 }
 
 function TaskCard({ task, i, readOnly, setStatus, setPrio, confirmId, setConfirmId, del, editId, setEditId, editText, setEditText, commitEdit }) {
-  const s          = STATUS_MAP[task.status];
-  const p          = PRIORITY_MAP[task.priority || "medium"];
-  const isEditing  = editId === task.id;
-  const isConfirm  = confirmId === task.id;
+  const s         = STATUS_MAP[task.status];
+  const p         = PRIORITY_MAP[task.priority || "medium"];
+  const isEditing = editId === task.id;
+  const isConfirm = confirmId === task.id;
 
   return (
     <div
