@@ -10,18 +10,31 @@ const sb = createClient(SUPABASE_URL, SUPABASE_ANON);
 // ─── User ID (no login — persisted in localStorage per device) ────────────────
 
 const USER_ID_KEY = "taskly:userId";
+const OLD_NS      = "taskly:";
 
 function getOrCreateUserId() {
   let id = localStorage.getItem(USER_ID_KEY);
   if (!id) {
-    // Generate a random ID e.g. "usr_x7k2p9q1"
     id = "usr_" + Math.random().toString(36).slice(2, 10);
     localStorage.setItem(USER_ID_KEY, id);
   }
   return id;
 }
 
-const USER_ID = getOrCreateUserId();
+// Read all legacy localStorage task keys for migration
+function readLocalStorageTasks() {
+  const result = [];
+  for (const k of Object.keys(localStorage)) {
+    if (!k.startsWith(OLD_NS)) continue;
+    const suffix = k.slice(OLD_NS.length);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(suffix)) continue;
+    try {
+      const tasks = JSON.parse(localStorage.getItem(k)) || [];
+      if (tasks.length) result.push({ dateKey: suffix, tasks });
+    } catch {}
+  }
+  return result;
+}
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -85,9 +98,9 @@ const dbToTask = (row) => ({
   createdAt:  row.created_at,
 });
 
-const taskToDb = (task, dateKey) => ({
+const taskToDb = (task, dateKey, userId) => ({
   id:          task.id,
-  user_id:     USER_ID,
+  user_id:     userId,
   date_key:    dateKey,
   text:        task.text,
   status:      task.status,
@@ -96,40 +109,40 @@ const taskToDb = (task, dateKey) => ({
   created_at:  task.createdAt,
 });
 
-async function fetchDay(dateKey) {
+async function fetchDay(dateKey, userId) {
   const { data, error } = await sb
     .from("tasks")
     .select("*")
-    .eq("user_id", USER_ID)
+    .eq("user_id", userId)
     .eq("date_key", dateKey)
     .order("created_at", { ascending: false });
   if (error) throw error;
   return (data || []).map(dbToTask);
 }
 
-async function fetchAllDateKeys() {
+async function fetchAllDateKeys(userId) {
   const { data, error } = await sb
     .from("tasks")
     .select("date_key")
-    .eq("user_id", USER_ID);
+    .eq("user_id", userId);
   if (error) throw error;
   const unique = [...new Set((data || []).map(r => r.date_key))].sort().reverse();
   return unique;
 }
 
-async function upsertTask(task, dateKey) {
-  const { error } = await sb.from("tasks").upsert(taskToDb(task, dateKey));
+async function upsertTask(task, dateKey, userId) {
+  const { error } = await sb.from("tasks").upsert(taskToDb(task, dateKey, userId));
   if (error) throw error;
 }
 
-async function deleteTask(id) {
-  const { error } = await sb.from("tasks").delete().eq("id", id).eq("user_id", USER_ID);
+async function deleteTask(id, userId) {
+  const { error } = await sb.from("tasks").delete().eq("id", id).eq("user_id", userId);
   if (error) throw error;
 }
 
-async function upsertMany(tasks, dateKey) {
+async function upsertMany(tasks, dateKey, userId) {
   if (!tasks.length) return;
-  const { error } = await sb.from("tasks").upsert(tasks.map(t => taskToDb(t, dateKey)));
+  const { error } = await sb.from("tasks").upsert(tasks.map(t => taskToDb(t, dateKey, userId)));
   if (error) throw error;
 }
 
@@ -140,6 +153,7 @@ const uid = () => `t${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
 // ─── App ──────────────────────────────────────────────────────────────────────
 
 export default function App() {
+  const [userId, setUserId]           = useState(getOrCreateUserId);
   const [dateKey, setDateKey]         = useState(todayKey);
   const [tasks, setTasks]             = useState([]);
   const [loading, setLoading]         = useState(true);
@@ -156,6 +170,13 @@ export default function App() {
   const [showHistory, setShowHistory] = useState(false);
   const [historyKeys, setHistoryKeys] = useState([]);
   const [error, setError]             = useState(null);
+  // Change user ID modal
+  const [showChangeId, setShowChangeId] = useState(false);
+  const [idInput, setIdInput]           = useState("");
+  const [idError, setIdError]           = useState("");
+  // Migration state
+  const [migrating, setMigrating]       = useState(false);
+  const [migrateResult, setMigrateResult] = useState(null);
   const inputRef = useRef();
 
   // Load tasks when date changes
@@ -169,17 +190,17 @@ export default function App() {
     setConfirmId(null);
     setShowEndDay(false);
 
-    fetchDay(dateKey)
+    fetchDay(dateKey, userId)
       .then(t => { if (!cancelled) { setTasks(t); setLoading(false); } })
       .catch(e => { if (!cancelled) { setError(e.message); setLoading(false); } });
 
     return () => { cancelled = true; };
-  }, [dateKey]);
+  }, [dateKey, userId]);
 
   // Load history keys on mount and after end day
   const refreshHistory = useCallback(() => {
-    fetchAllDateKeys().then(setHistoryKeys).catch(() => {});
-  }, []);
+    fetchAllDateKeys(userId).then(setHistoryKeys).catch(() => {});
+  }, [userId]);
 
   useEffect(() => { refreshHistory(); }, [refreshHistory]);
 
@@ -197,7 +218,7 @@ export default function App() {
     setPriority("medium");
     setSaving(true);
     try {
-      await upsertTask(task, dateKey);
+      await upsertTask(task, dateKey, userId);
       refreshHistory();
     } catch (e) {
       setError(e.message);
@@ -209,7 +230,7 @@ export default function App() {
     setTasks(p => p.map(t => t.id === id ? { ...t, status } : t));
     const task = tasks.find(t => t.id === id);
     if (!task) return;
-    try { await upsertTask({ ...task, status }, dateKey); }
+    try { await upsertTask({ ...task, status }, dateKey, userId); }
     catch (e) {
       setError(e.message);
       setTasks(p => p.map(t => t.id === id ? { ...t, status: task.status } : t)); // rollback
@@ -220,7 +241,7 @@ export default function App() {
     setTasks(p => p.map(t => t.id === id ? { ...t, priority: prio } : t));
     const task = tasks.find(t => t.id === id);
     if (!task) return;
-    try { await upsertTask({ ...task, priority: prio }, dateKey); }
+    try { await upsertTask({ ...task, priority: prio }, dateKey, userId); }
     catch (e) { setError(e.message); setTasks(p => p.map(t => t.id === id ? { ...t, priority: task.priority } : t)); }
   };
 
@@ -228,7 +249,7 @@ export default function App() {
     const task = tasks.find(t => t.id === id);
     setTasks(p => p.filter(t => t.id !== id));
     setConfirmId(null);
-    try { await deleteTask(id); }
+    try { await deleteTask(id, userId); }
     catch (e) {
       setError(e.message);
       setTasks(p => [task, ...p]); // rollback
@@ -241,7 +262,7 @@ export default function App() {
     const task = tasks.find(t => t.id === id);
     setTasks(p => p.map(t => t.id === id ? { ...t, text } : t));
     setEditId(null);
-    try { await upsertTask({ ...task, text }, dateKey); }
+    try { await upsertTask({ ...task, text }, dateKey, userId); }
     catch (e) {
       setError(e.message);
       setTasks(p => p.map(t => t.id === id ? { ...t, text: task.text } : t));
@@ -257,12 +278,12 @@ export default function App() {
     try {
       if (unfinished.length) {
         // Fetch tomorrow's existing tasks to avoid duplicates
-        const existing = await fetchDay(tomorrow);
+        const existing = await fetchDay(tomorrow, userId);
         const existIds = new Set(existing.map(t => t.id));
         const toRoll   = unfinished
           .filter(t => !existIds.has(t.id))
           .map(t => ({ ...t, status: t.status === "blocked" ? "blocked" : "todo", rolledFrom: dateKey }));
-        if (toRoll.length) await upsertMany(toRoll, tomorrow);
+        if (toRoll.length) await upsertMany(toRoll, tomorrow, userId);
       }
       setShowEndDay(false);
       refreshHistory();
@@ -270,6 +291,41 @@ export default function App() {
     } catch (e) {
       setError(e.message);
     } finally { setSaving(false); }
+  };
+
+  // ── CHANGE USER ID ──
+  const applyChangeId = () => {
+    const newId = idInput.trim();
+    if (!newId) { setIdError("Please enter a user ID."); return; }
+    if (newId === userId) { setIdError("That's already your current ID."); return; }
+    localStorage.setItem(USER_ID_KEY, newId);
+    setUserId(newId);
+    setShowChangeId(false);
+    setIdInput("");
+    setIdError("");
+    setMigrateResult(null);
+  };
+
+  // ── MIGRATE LOCALSTORAGE → SUPABASE ──
+  const migrateFromLocalStorage = async () => {
+    const days = readLocalStorageTasks();
+    if (!days.length) { setMigrateResult({ count: 0 }); return; }
+    setMigrating(true);
+    setMigrateResult(null);
+    let total = 0;
+    try {
+      for (const { dateKey: dk, tasks: ts } of days) {
+        await upsertMany(ts, dk, userId);
+        total += ts.length;
+      }
+      setMigrateResult({ count: total, days: days.length });
+      refreshHistory();
+      // Reload current day
+      const fresh = await fetchDay(dateKey, userId);
+      setTasks(fresh);
+    } catch (e) {
+      setError(e.message);
+    } finally { setMigrating(false); }
   };
 
   // ── DERIVED ──
@@ -540,9 +596,66 @@ export default function App() {
 
         .empty-state { text-align:center; padding:56px 20px; color:#1e293b; font-size:13px; letter-spacing:0.04em; }
         .empty-icon  { font-size:30px; display:block; margin-bottom:12px; opacity:0.35; }
+
+        /* ── USER CHIP ── */
+        .user-chip { display:flex; align-items:center; gap:6px; background:#131c2e; border-radius:6px; padding:6px 10px; margin-bottom:16px; }
+        .user-dot  { width:6px; height:6px; border-radius:50%; background:#86efac; flex-shrink:0; }
+        .user-id   { font-size:10px; color:#475569; letter-spacing:0.04em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
+        .user-change-btn { background:none; border:none; color:#334155; cursor:pointer; font-size:11px; padding:0 2px; transition:color 0.12s; flex-shrink:0; }
+        .user-change-btn:hover { color:#7dd3fc; }
+
+        /* ── MIGRATION ── */
+        .migrate-banner { background:rgba(125,211,252,0.06); border:1px solid rgba(125,211,252,0.15); border-radius:8px; padding:12px; margin-bottom:16px; }
+        .migrate-title  { font-size:12px; font-weight:600; color:#7dd3fc; margin-bottom:4px; }
+        .migrate-sub    { font-size:11px; color:#475569; line-height:1.5; margin-bottom:10px; }
+        .migrate-btn    { width:100%; background:rgba(125,211,252,0.1); border:1px solid rgba(125,211,252,0.25); border-radius:6px; padding:7px; color:#7dd3fc; font-family:inherit; font-size:12px; font-weight:600; cursor:pointer; transition:all 0.15s; }
+        .migrate-btn:hover    { background:rgba(125,211,252,0.18); }
+        .migrate-btn:disabled { opacity:0.5; cursor:not-allowed; }
+        .migrate-success { font-size:11px; color:#86efac; background:rgba(134,239,172,0.06); border:1px solid rgba(134,239,172,0.15); border-radius:6px; padding:8px 10px; margin-bottom:16px; }
+
+        /* ── CHANGE ID MODAL ── */
+        .id-display { display:flex; align-items:center; gap:10px; background:#131c2e; border-radius:8px; padding:12px 14px; margin-bottom:4px; }
+        .id-code    { flex:1; font-family:'DM Mono',monospace; font-size:13px; color:#7dd3fc; word-break:break-all; }
+        .copy-btn   { background:rgba(125,211,252,0.1); border:1px solid rgba(125,211,252,0.25); border-radius:6px; padding:5px 12px; color:#7dd3fc; font-family:inherit; font-size:12px; cursor:pointer; white-space:nowrap; transition:all 0.12s; }
+        .copy-btn:hover { background:rgba(125,211,252,0.2); }
+        .id-input   { flex:1; background:#131c2e; border:1px solid #1e293b; border-radius:8px; padding:10px 14px; color:#e2e8f0; font-family:inherit; font-size:13px; outline:none; transition:border-color 0.15s; }
+        .id-input:focus { border-color:#7dd3fc; }
+        .id-input::placeholder { color:#334155; }
       `}</style>
 
       {/* ── END DAY MODAL ── */}
+      {/* ── CHANGE USER ID MODAL ── */}
+      {showChangeId && (
+        <div className="modal-backdrop" onClick={() => setShowChangeId(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-title">Your User ID</div>
+            <div className="modal-sub">
+              Your ID links you to your data in Supabase. Copy it somewhere safe — if you switch browsers or devices, enter it here to recover all your tasks.
+            </div>
+            <div className="id-display">
+              <code className="id-code">{userId}</code>
+              <button className="copy-btn" onClick={() => navigator.clipboard?.writeText(userId)}>Copy</button>
+            </div>
+            <div style={{ borderTop:"1px solid #1e293b", margin:"20px 0" }} />
+            <div style={{ fontSize:13, color:"#64748b", marginBottom:12 }}>Enter a different ID to switch accounts:</div>
+            <div style={{ display:"flex", gap:8, marginBottom:8 }}>
+              <input
+                className="id-input"
+                placeholder="usr_xxxxxxxx"
+                value={idInput}
+                onChange={e => { setIdInput(e.target.value); setIdError(""); }}
+                onKeyDown={e => e.key === "Enter" && applyChangeId()}
+              />
+              <button className="modal-confirm" style={{ flex:"none", padding:"10px 16px", fontSize:13 }} onClick={applyChangeId}>
+                Switch
+              </button>
+            </div>
+            {idError && <div style={{ fontSize:12, color:"#f87171", marginBottom:8 }}>{idError}</div>}
+            <button className="modal-cancel" style={{ width:"100%", marginTop:4 }} onClick={() => setShowChangeId(false)}>Close</button>
+          </div>
+        </div>
+      )}
+
       {showEndDay && (
         <div className="modal-backdrop" onClick={() => setShowEndDay(false)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
@@ -585,10 +698,30 @@ export default function App() {
           </div>
 
           {/* User ID chip */}
-          <div className="user-chip" title={`Your user ID: ${USER_ID}`}>
+          <div className="user-chip">
             <span className="user-dot" />
-            <span className="user-id">{USER_ID}</span>
+            <span className="user-id" title={userId}>{userId}</span>
+            <button className="user-change-btn" onClick={() => { setShowChangeId(true); setIdInput(""); setIdError(""); }} title="Change or recover user ID">✎</button>
           </div>
+
+          {/* Migration banner — only if localStorage has old data */}
+          {readLocalStorageTasks().length > 0 && !migrateResult && (
+            <div className="migrate-banner">
+              <div className="migrate-title">📦 Local data found</div>
+              <div className="migrate-sub">You have tasks in your old browser storage. Import them to Supabase so they're saved permanently.</div>
+              <button className="migrate-btn" disabled={migrating} onClick={migrateFromLocalStorage}>
+                {migrating ? "Importing..." : "Import to Database"}
+              </button>
+            </div>
+          )}
+          {migrateResult && (
+            <div className="migrate-success">
+              ✓ Imported {migrateResult.count} task{migrateResult.count !== 1 ? "s" : ""} from {migrateResult.days} day{migrateResult.days !== 1 ? "s" : ""}
+            </div>
+          )}
+          {migrateResult && migrateResult.count === 0 && (
+            <div className="migrate-success" style={{ color:"#475569" }}>No local tasks found to import.</div>
+          )}
 
           <div className="progress-section">
             <div className="progress-label">
