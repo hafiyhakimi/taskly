@@ -3,8 +3,12 @@ import { createClient } from "@supabase/supabase-js";
 
 // ─── Supabase ─────────────────────────────────────────────────────────────────
 
-const SUPABASE_URL  = "https://ubqagpwrxcnwfegijnqz.supabase.co";
-const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVicWFncHdyeGNud2ZlZ2lqbnF6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI2ODg0NjUsImV4cCI6MjA4ODI2NDQ2NX0.zC67TTH17hQmwzzFWmy61Kju4nvBtC2KCDKq5LwgRoo";
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+if (!SUPABASE_URL || !SUPABASE_ANON) {
+  throw new Error("Missing env vars: VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY");
+}
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON);
 
 // ─── User ID (no login — persisted in localStorage per device) ────────────────
@@ -146,6 +150,43 @@ async function upsertMany(tasks, dateKey, userId) {
   if (error) throw error;
 }
 
+// Fetch all unfinished tasks from days strictly before a given dateKey
+async function fetchUnfinishedBefore(beforeKey, userId) {
+  const { data, error } = await sb
+    .from("tasks")
+    .select("*")
+    .eq("user_id", userId)
+    .lt("date_key", beforeKey)
+    .neq("status", "done");
+  if (error) throw error;
+  return (data || []).map(r => ({ ...dbToTask(r), _dateKey: r.date_key }));
+}
+
+// ─── Recurring task helpers ──────────────────────────────────────────────────
+
+async function fetchRecurring(userId) {
+  const { data, error } = await sb
+    .from("recurring_tasks")
+    .select("*")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: true });
+  if (error) throw error;
+  return (data || []).map(r => ({ id: r.id, text: r.text, priority: r.priority, createdAt: r.created_at }));
+}
+
+async function upsertRecurring(rec, userId) {
+  const { error } = await sb.from("recurring_tasks").upsert({
+    id: rec.id, user_id: userId, text: rec.text,
+    priority: rec.priority || "medium", created_at: rec.createdAt,
+  });
+  if (error) throw error;
+}
+
+async function deleteRecurring(id, userId) {
+  const { error } = await sb.from("recurring_tasks").delete().eq("id", id).eq("user_id", userId);
+  if (error) throw error;
+}
+
 // ─── ID gen ───────────────────────────────────────────────────────────────────
 
 const uid = () => `t${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
@@ -181,6 +222,14 @@ export default function App() {
   // Migration state
   const [migrating, setMigrating]       = useState(false);
   const [migrateResult, setMigrateResult] = useState(null);
+  // Recurring tasks
+  const [recurring, setRecurring]           = useState([]);
+  const [showRecurring, setShowRecurring]   = useState(false);
+  const [recInput, setRecInput]             = useState("");
+  const [recPriority, setRecPriority]       = useState("medium");
+  const [recEditId, setRecEditId]           = useState(null);
+  const [recEditText, setRecEditText]       = useState("");
+  const [recEditPrio, setRecEditPrio]       = useState("medium");
   const inputRef = useRef();
 
   // Load tasks when date changes
@@ -207,6 +256,118 @@ export default function App() {
   }, [userId]);
 
   useEffect(() => { refreshHistory(); }, [refreshHistory]);
+
+  const refreshRecurring = useCallback(() => {
+    fetchRecurring(userId).then(setRecurring).catch(() => {});
+  }, [userId]);
+
+  useEffect(() => { refreshRecurring(); }, [refreshRecurring]);
+
+  // ── AUTO ROLLOVER ON OPEN ──
+  // Runs once on mount (and whenever userId changes).
+  // Finds all unfinished tasks from past days and rolls them to today
+  // if they haven't already been rolled (checked by id).
+  useEffect(() => {
+    const tk = todayKey();
+    async function autoRollover() {
+      try {
+        const [unfinished, todayTasks] = await Promise.all([
+          fetchUnfinishedBefore(tk, userId),
+          fetchDay(tk, userId),
+        ]);
+        if (!unfinished.length) return;
+
+        const existIds = new Set(todayTasks.map(t => t.id));
+        const toRoll = unfinished
+          .filter(t => !existIds.has(t.id))
+          .map(t => ({
+            ...t,
+            status:     t.status === "blocked" ? "blocked" : "todo",
+            rolledFrom: t._dateKey,
+            _dateKey:   undefined,
+          }));
+
+        if (toRoll.length) await upsertMany(toRoll, tk, userId);
+        // If we're already viewing today, reload the task list
+        if (dateKey === tk) {
+          const fresh = await fetchDay(tk, userId);
+          setTasks(fresh);
+        }
+        refreshHistory();
+      } catch (_) {
+        // Silent — don't surface auto-rollover errors to the user
+      }
+    }
+    autoRollover();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId]);
+
+  // ── AUTO-ADD RECURRING TASKS ──
+  // Runs on mount. For each recurring template, if today doesn't already
+  // have a task with the same recurring_id marker, insert it as To Do.
+  useEffect(() => {
+    const tk = todayKey();
+    async function autoAddRecurring() {
+      try {
+        const [templates, todayTasks] = await Promise.all([
+          fetchRecurring(userId),
+          fetchDay(tk, userId),
+        ]);
+        if (!templates.length) return;
+        // Mark tasks that came from a recurring template via their id prefix "rec_"
+        const existRecIds = new Set(
+          todayTasks.filter(t => t.id.startsWith("rec_")).map(t => t.id.split("__")[0])
+        );
+        const toAdd = templates
+          .filter(r => !existRecIds.has("rec_" + r.id))
+          .map(r => ({
+            id:        `rec_${r.id}__${tk}`,
+            text:      r.text,
+            status:    "todo",
+            priority:  r.priority,
+            createdAt: Date.now(),
+            rolledFrom: null,
+          }));
+        if (!toAdd.length) return;
+        await upsertMany(toAdd, tk, userId);
+        if (dateKey === tk) {
+          const fresh = await fetchDay(tk, userId);
+          setTasks(fresh);
+        }
+      } catch (_) { /* silent */ }
+    }
+    autoAddRecurring();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId]);
+
+  // ── RECURRING CRUD ──
+  const addRecurring = async () => {
+    const text = recInput.trim();
+    if (!text) return;
+    const rec = { id: uid(), text, priority: recPriority, createdAt: Date.now() };
+    setRecurring(p => [...p, rec]);
+    setRecInput(""); setRecPriority("medium");
+    try { await upsertRecurring(rec, userId); }
+    catch (e) { setError(e.message); setRecurring(p => p.filter(r => r.id !== rec.id)); }
+  };
+
+  const saveRecurringEdit = async (id) => {
+    const text = recEditText.trim();
+    if (!text) { setRecEditId(null); return; }
+    const old = recurring.find(r => r.id === id);
+    const updated = { ...old, text, priority: recEditPrio };
+    setRecurring(p => p.map(r => r.id === id ? updated : r));
+    setRecEditId(null);
+    try { await upsertRecurring(updated, userId); }
+    catch (e) { setError(e.message); setRecurring(p => p.map(r => r.id === id ? old : r)); }
+  };
+
+  const removeRecurring = async (id) => {
+    const old = recurring.find(r => r.id === id);
+    setRecurring(p => p.filter(r => r.id !== id));
+    try { await deleteRecurring(id, userId); }
+    catch (e) { setError(e.message); setRecurring(p => [...p, old]); }
+  };
 
   const isToday    = dateKey === todayKey();
   const isPast     = dateKey < todayKey();
@@ -748,6 +909,47 @@ export default function App() {
           .page-title  { font-size:18px; }
           .date-picker { width:120px; }
         }
+        /* ── RECURRING TASKS ── */
+        .recurring-panel { display:flex; flex-direction:column; gap:4px; margin-top:6px; margin-bottom:8px; }
+        .rec-item {
+          display:flex; align-items:center; gap:6px;
+          padding:6px 8px; border-radius:7px; background:var(--bg-chip);
+          border:1px solid var(--border);
+        }
+        .rec-dot  { width:6px; height:6px; border-radius:50%; flex-shrink:0; }
+        .rec-text { flex:1; font-size:12px; color:var(--text2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .rec-action-btn {
+          background:none; border:none; cursor:pointer; font-size:11px; padding:2px 5px;
+          border-radius:4px; transition:all 0.12s; line-height:1; flex-shrink:0;
+        }
+        .rec-action-btn.edit   { color:var(--text4); }
+        .rec-action-btn.edit:hover { color:#7dd3fc; background:var(--bg-chip2); }
+        .rec-action-btn.del    { color:var(--text4); }
+        .rec-action-btn.del:hover  { color:#f87171; background:rgba(248,113,113,0.1); }
+        .rec-action-btn.save   { color:#86efac; }
+        .rec-action-btn.save:hover { background:rgba(134,239,172,0.1); }
+        .rec-action-btn.cancel { color:var(--text4); }
+        .rec-action-btn.cancel:hover { color:#f87171; }
+        .rec-edit-input {
+          flex:1; background:var(--edit-bg); border:1px solid #7dd3fc; border-radius:5px;
+          padding:3px 8px; color:var(--text); font-family:inherit; font-size:12px; outline:none; min-width:0;
+        }
+        .rec-prio-sel {
+          appearance:none; -webkit-appearance:none;
+          background:var(--bg-chip2); border:1px solid var(--border2); border-radius:5px;
+          padding:3px 6px; font-size:10px; font-weight:600; color:var(--text3);
+          font-family:inherit; outline:none; cursor:pointer; flex-shrink:0;
+        }
+        .rec-add-row {
+          display:flex; align-items:center; gap:5px; margin-top:4px;
+          padding:6px 8px; border-radius:7px; border:1px dashed var(--border2);
+        }
+        .rec-add-input {
+          flex:1; background:transparent; border:none; outline:none;
+          font-family:inherit; font-size:12px; color:var(--text); min-width:0;
+        }
+        .rec-add-input::placeholder { color:var(--text5); }
+
       `}</style>
 
       {/* ── END DAY MODAL ── */}
@@ -921,6 +1123,56 @@ export default function App() {
                 </div>
               )}
             </>
+          )}
+
+          {/* ── RECURRING TASKS ── */}
+          <div className="section-label" style={{ marginTop:8 }}>Recurring Tasks</div>
+          <button className="history-toggle" onClick={() => setShowRecurring(v => !v)}>
+            {showRecurring ? "▾" : "▸"} Daily Templates ({recurring.length})
+          </button>
+          {showRecurring && (
+            <div className="recurring-panel">
+              {recurring.map(r => (
+                <div key={r.id} className="rec-item">
+                  {recEditId === r.id ? (
+                    <>
+                      <input
+                        className="rec-edit-input"
+                        value={recEditText}
+                        onChange={e => setRecEditText(e.target.value)}
+                        onKeyDown={e => { if (e.key === "Enter") saveRecurringEdit(r.id); if (e.key === "Escape") setRecEditId(null); }}
+                        autoFocus
+                      />
+                      <select className="rec-prio-sel" value={recEditPrio} onChange={e => setRecEditPrio(e.target.value)}>
+                        {PRIORITY.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
+                      </select>
+                      <button className="rec-action-btn save" onClick={() => saveRecurringEdit(r.id)}>✓</button>
+                      <button className="rec-action-btn cancel" onClick={() => setRecEditId(null)}>✕</button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="rec-dot" style={{ background: PRIORITY_MAP[r.priority]?.color || "#64748b" }} />
+                      <span className="rec-text">{r.text}</span>
+                      <button className="rec-action-btn edit" onClick={() => { setRecEditId(r.id); setRecEditText(r.text); setRecEditPrio(r.priority); }}>✎</button>
+                      <button className="rec-action-btn del" onClick={() => removeRecurring(r.id)}>✕</button>
+                    </>
+                  )}
+                </div>
+              ))}
+              <div className="rec-add-row">
+                <input
+                  className="rec-add-input"
+                  placeholder="New daily task..."
+                  value={recInput}
+                  onChange={e => setRecInput(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && addRecurring()}
+                />
+                <select className="rec-prio-sel" value={recPriority} onChange={e => setRecPriority(e.target.value)}>
+                  {PRIORITY.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
+                </select>
+                <button className="rec-action-btn save" onClick={addRecurring}>+</button>
+              </div>
+            </div>
           )}
 
           <div className="sidebar-footer">
