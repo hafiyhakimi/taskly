@@ -100,6 +100,7 @@ const dbToTask = (row) => ({
   priority:   row.priority,
   rolledFrom: row.rolled_from || null,
   createdAt:  row.created_at,
+  subtasks:   row.subtasks || [],
 });
 
 const taskToDb = (task, dateKey, userId) => ({
@@ -111,6 +112,7 @@ const taskToDb = (task, dateKey, userId) => ({
   priority:    task.priority || "medium",
   rolled_from: task.rolledFrom || null,
   created_at:  task.createdAt,
+  subtasks:    task.subtasks || [],
 });
 
 async function fetchDay(dateKey, userId) {
@@ -1296,7 +1298,8 @@ export default function App() {
                           setStatus={setStatus} setPrio={setPrio}
                           confirmId={confirmId} setConfirmId={setConfirmId} del={del}
                           editId={editId} setEditId={setEditId}
-                          editText={editText} setEditText={setEditText} commitEdit={commitEdit} />
+                          editText={editText} setEditText={setEditText} commitEdit={commitEdit}
+                          updateSubtasks={updateSubtasks} />
                       ))}
                     </div>
                   );
@@ -1306,7 +1309,8 @@ export default function App() {
                     setStatus={setStatus} setPrio={setPrio}
                     confirmId={confirmId} setConfirmId={setConfirmId} del={del}
                     editId={editId} setEditId={setEditId}
-                    editText={editText} setEditText={setEditText} commitEdit={commitEdit} />
+                    editText={editText} setEditText={setEditText} commitEdit={commitEdit}
+                    updateSubtasks={updateSubtasks} />
                 ))
             }
           </div>
@@ -1316,66 +1320,175 @@ export default function App() {
   );
 }
 
-function TaskCard({ task, i, readOnly, setStatus, setPrio, confirmId, setConfirmId, del, editId, setEditId, editText, setEditText, commitEdit }) {
+function TaskCard({ task, i, readOnly, setStatus, setPrio, confirmId, setConfirmId, del, editId, setEditId, editText, setEditText, commitEdit, updateSubtasks }) {
   const s         = STATUS_MAP[task.status];
   const p         = PRIORITY_MAP[task.priority || "medium"];
   const isEditing = editId === task.id;
   const isConfirm = confirmId === task.id;
+  const subtasks  = task.subtasks || [];
+  const doneCount = subtasks.filter(s => s.done).length;
+
+  const [showSubs, setShowSubs]       = useState(subtasks.length > 0);
+  const [subInput, setSubInput]       = useState("");
+  const [subEditId, setSubEditId]     = useState(null);
+  const [subEditText, setSubEditText] = useState("");
+
+  const addSubtask = () => {
+    const text = subInput.trim();
+    if (!text) return;
+    const updated = [...subtasks, { id: `s${Date.now()}`, text, done: false, blocked: false }];
+    updateSubtasks(task.id, updated);
+    setSubInput("");
+  };
+
+  const toggleSubDone = (sid) => {
+    const updated = subtasks.map(s => s.id === sid ? { ...s, done: !s.done, blocked: s.done ? s.blocked : false } : s);
+    updateSubtasks(task.id, updated);
+  };
+
+  const toggleSubBlocked = (sid) => {
+    const updated = subtasks.map(s => s.id === sid ? { ...s, blocked: !s.blocked, done: false } : s);
+    updateSubtasks(task.id, updated);
+  };
+
+  const deleteSubtask = (sid) => {
+    updateSubtasks(task.id, subtasks.filter(s => s.id !== sid));
+  };
+
+  const commitSubEdit = (sid) => {
+    const text = subEditText.trim();
+    if (!text) { setSubEditId(null); return; }
+    updateSubtasks(task.id, subtasks.map(s => s.id === sid ? { ...s, text } : s));
+    setSubEditId(null);
+  };
 
   return (
     <div
       className={`task-card ${task.status === "done" ? "is-done" : ""} ${isConfirm ? "confirming" : ""} ${task.rolledFrom ? "rolled" : ""}`}
       style={{ animationDelay:`${i * 0.03}s` }}
     >
-      <select
-        className="status-pill"
-        value={task.status}
-        disabled={readOnly}
-        style={{ background:s.bg, color:s.color, borderColor:s.border }}
-        onChange={e => setStatus(task.id, e.target.value)}
-      >
-        {STATUSES.map(st => <option key={st.key} value={st.key}>{st.label}</option>)}
-      </select>
-
-      <select
-        className="p-badge-select"
-        value={task.priority || "medium"}
-        disabled={readOnly}
-        style={{ color:p.color }}
-        onChange={e => setPrio(task.id, e.target.value)}
-      >
-        {PRIORITY.map(pr => <option key={pr.key} value={pr.key} style={{ color:pr.color }}>{pr.label}</option>)}
-      </select>
-
-      {task.rolledFrom && <span className="rolled-tag">rolled</span>}
-
-      {isEditing ? (
-        <input
-          className="edit-in" autoFocus value={editText}
-          onChange={e => setEditText(e.target.value)}
-          onKeyDown={e => { if (e.key === "Enter") commitEdit(task.id); if (e.key === "Escape") setEditId(null); }}
-          onBlur={() => commitEdit(task.id)}
-        />
-      ) : (
-        <span
-          className={`task-text ${task.status === "done" ? "done" : ""}`}
-          onDoubleClick={() => { if (!readOnly) { setEditId(task.id); setEditText(task.text); } }}
+      {/* ── Main row ── */}
+      <div className="task-main-row">
+        <select
+          className="status-pill"
+          value={task.status}
+          disabled={readOnly}
+          style={{ background:s.bg, color:s.color, borderColor:s.border }}
+          onChange={e => setStatus(task.id, e.target.value)}
         >
-          {task.text}
-        </span>
-      )}
+          {STATUSES.map(st => <option key={st.key} value={st.key}>{st.label}</option>)}
+        </select>
 
-      {isConfirm ? (
-        <div className="confirm-row">
-          <span className="confirm-label">Delete?</span>
-          <button className="confirm-yes" onClick={() => del(task.id)}>Yes</button>
-          <button className="confirm-no"  onClick={() => setConfirmId(null)}>No</button>
+        <select
+          className="p-badge-select"
+          value={task.priority || "medium"}
+          disabled={readOnly}
+          style={{ color:p.color }}
+          onChange={e => setPrio(task.id, e.target.value)}
+        >
+          {PRIORITY.map(pr => <option key={pr.key} value={pr.key} style={{ color:pr.color }}>{pr.label}</option>)}
+        </select>
+
+        {task.rolledFrom && <span className="rolled-tag">rolled</span>}
+
+        {isEditing ? (
+          <input
+            className="edit-in" autoFocus value={editText}
+            onChange={e => setEditText(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") commitEdit(task.id); if (e.key === "Escape") setEditId(null); }}
+            onBlur={() => commitEdit(task.id)}
+          />
+        ) : (
+          <span
+            className={`task-text ${task.status === "done" ? "done" : ""}`}
+            onDoubleClick={() => { if (!readOnly) { setEditId(task.id); setEditText(task.text); } }}
+          >
+            {task.text}
+          </span>
+        )}
+
+        {/* Subtask progress chip */}
+        {subtasks.length > 0 && (
+          <button className="sub-progress-chip" onClick={() => setShowSubs(v => !v)}>
+            <span className="sub-progress-fill" style={{ width:`${(doneCount/subtasks.length)*100}%` }} />
+            <span className="sub-progress-label">{doneCount}/{subtasks.length}</span>
+          </button>
+        )}
+
+        {isConfirm ? (
+          <div className="confirm-row">
+            <span className="confirm-label">Delete?</span>
+            <button className="confirm-yes" onClick={() => del(task.id)}>Yes</button>
+            <button className="confirm-no"  onClick={() => setConfirmId(null)}>No</button>
+          </div>
+        ) : (
+          <>
+            {!readOnly && (
+              <button className="icon-btn sub-toggle-btn" title="Subtasks" onClick={() => setShowSubs(v => !v)}>
+                {showSubs ? "⌃" : "⌄"}
+              </button>
+            )}
+            <button className="icon-btn" disabled={readOnly} onClick={() => { setEditId(task.id); setEditText(task.text); }}>✎</button>
+            <button className="icon-btn del" disabled={readOnly} onClick={() => setConfirmId(task.id)}>✕</button>
+          </>
+        )}
+      </div>
+
+      {/* ── Subtasks panel ── */}
+      {showSubs && (
+        <div className="subtask-panel">
+          {subtasks.map(sub => (
+            <div key={sub.id} className={`subtask-row ${sub.done ? "sub-done" : ""} ${sub.blocked ? "sub-blocked" : ""}`}>
+              <button
+                className={`sub-check ${sub.done ? "checked" : ""}`}
+                disabled={readOnly}
+                onClick={() => toggleSubDone(sub.id)}
+                title="Mark done"
+              >
+                {sub.done ? "●" : "○"}
+              </button>
+              {subEditId === sub.id ? (
+                <input
+                  className="sub-edit-input" autoFocus
+                  value={subEditText}
+                  onChange={e => setSubEditText(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter") commitSubEdit(sub.id); if (e.key === "Escape") setSubEditId(null); }}
+                  onBlur={() => commitSubEdit(sub.id)}
+                />
+              ) : (
+                <span className="sub-text" onDoubleClick={() => { if (!readOnly) { setSubEditId(sub.id); setSubEditText(sub.text); } }}>
+                  {sub.text}
+                </span>
+              )}
+              {!readOnly && (
+                <div className="sub-actions">
+                  <button
+                    className={`sub-action ${sub.blocked ? "is-blocked" : ""}`}
+                    onClick={() => toggleSubBlocked(sub.id)}
+                    title={sub.blocked ? "Unblock" : "Mark blocked"}
+                  >✕</button>
+                  <button className="sub-action" onClick={() => { setSubEditId(sub.id); setSubEditText(sub.text); }} title="Edit">✎</button>
+                  <button className="sub-action del" onClick={() => deleteSubtask(sub.id)} title="Delete">🗑</button>
+                </div>
+              )}
+            </div>
+          ))}
+          {!readOnly && (
+            <div className="sub-add-row">
+              <span className="sub-add-icon">+</span>
+              <input
+                className="sub-add-input"
+                placeholder="Add a subtask..."
+                value={subInput}
+                onChange={e => setSubInput(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && addSubtask()}
+              />
+              {subInput && (
+                <button className="sub-action" style={{ color:"#86efac" }} onClick={addSubtask}>↵</button>
+              )}
+            </div>
+          )}
         </div>
-      ) : (
-        <>
-          <button className="icon-btn" disabled={readOnly} onClick={() => { setEditId(task.id); setEditText(task.text); }}>✎</button>
-          <button className="icon-btn del" disabled={readOnly} onClick={() => setConfirmId(task.id)}>✕</button>
-        </>
       )}
     </div>
   );
