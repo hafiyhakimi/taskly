@@ -3,12 +3,8 @@ import { createClient } from "@supabase/supabase-js";
 
 // ─── Supabase ─────────────────────────────────────────────────────────────────
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-const SUPABASE_ANON = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
-if (!SUPABASE_URL || !SUPABASE_ANON) {
-  throw new Error("Missing env vars: VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY");
-}
+const SUPABASE_URL  = "https://ubqagpwrxcnwfegijnqz.supabase.co";
+const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVicWFncHdyeGNud2ZlZ2lqbnF6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI2ODg0NjUsImV4cCI6MjA4ODI2NDQ2NX0.zC67TTH17hQmwzzFWmy61Kju4nvBtC2KCDKq5LwgRoo";
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON);
 
 // ─── User ID (no login — persisted in localStorage per device) ────────────────
@@ -341,6 +337,24 @@ export default function App() {
     autoAddRecurring();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
+
+  // ── SUBTASK CRUD ──
+  const updateSubtasks = async (taskId, subtasks) => {
+    setTasks(p => p.map(t => t.id === taskId ? { ...t, subtasks } : t));
+    const task = tasks.find(t => t.id === taskId);
+    if (!task) return;
+    // Auto-set parent status based on subtasks
+    let newStatus = task.status;
+    if (subtasks.length > 0) {
+      if (subtasks.every(s => s.done)) newStatus = "done";
+      else if (subtasks.some(s => s.blocked) && newStatus === "done") newStatus = "inprogress";
+      else if (task.status === "done" && !subtasks.every(s => s.done)) newStatus = "inprogress";
+    }
+    const updated = { ...task, subtasks, status: newStatus };
+    setTasks(p => p.map(t => t.id === taskId ? updated : t));
+    try { await upsertTask(updated, dateKey, userId); }
+    catch (e) { setError(e.message); setTasks(p => p.map(t => t.id === taskId ? task : t)); }
+  };
 
   // ── RECURRING CRUD ──
   const addRecurring = async () => {
@@ -951,6 +965,94 @@ export default function App() {
           font-family:inherit; font-size:12px; color:var(--text); min-width:0;
         }
         .rec-add-input::placeholder { color:var(--text5); }
+
+        /* ── TASK CARD LAYOUT ── */
+        .task-card { flex-direction:column; align-items:stretch; padding:0; gap:0; }
+        .task-main-row {
+          display:flex; align-items:center; gap:12px;
+          padding:11px 16px;
+        }
+
+        /* ── SUBTASK PROGRESS CHIP ── */
+        .sub-progress-chip {
+          position:relative; overflow:hidden;
+          background:var(--bg-chip); border:1px solid var(--border2);
+          border-radius:20px; padding:2px 10px; cursor:pointer;
+          font-size:10px; font-weight:600; color:var(--text3);
+          white-space:nowrap; flex-shrink:0; transition:all 0.15s;
+          min-width:42px; text-align:center;
+        }
+        .sub-progress-chip:hover { border-color:var(--border3); }
+        .sub-progress-fill {
+          position:absolute; left:0; top:0; bottom:0;
+          background:rgba(134,239,172,0.18); transition:width 0.3s ease;
+        }
+        .sub-progress-label { position:relative; z-index:1; }
+
+        .sub-toggle-btn { font-size:11px !important; }
+
+        /* ── SUBTASK PANEL ── */
+        .subtask-panel {
+          border-top:1px solid var(--border);
+          padding:8px 16px 10px 16px;
+          display:flex; flex-direction:column; gap:3px;
+        }
+
+        .subtask-row {
+          display:flex; align-items:center; gap:8px;
+          padding:5px 8px; border-radius:6px;
+          transition:background 0.12s;
+        }
+        .subtask-row:hover { background:var(--bg-chip); }
+        .subtask-row.sub-done .sub-text { text-decoration:line-through; color:var(--text5); }
+        .subtask-row.sub-blocked .sub-text { color:#f87171; }
+
+        .sub-check {
+          background:none; border:none; cursor:pointer;
+          font-size:12px; padding:0; line-height:1; flex-shrink:0;
+          color:var(--text4); transition:color 0.12s;
+        }
+        .sub-check.checked { color:#86efac; }
+        .sub-check:disabled { cursor:default; opacity:0.4; }
+
+        .sub-text {
+          flex:1; font-size:12px; color:var(--text2); line-height:1.4;
+          cursor:default; min-width:0;
+        }
+
+        .sub-actions {
+          display:flex; gap:2px; opacity:0; transition:opacity 0.12s; flex-shrink:0;
+        }
+        .subtask-row:hover .sub-actions { opacity:1; }
+
+        .sub-action {
+          background:none; border:none; cursor:pointer;
+          font-size:11px; color:var(--text4); padding:2px 4px;
+          border-radius:4px; transition:all 0.12s; line-height:1;
+        }
+        .sub-action:hover { color:var(--text); background:var(--bg-chip2); }
+        .sub-action.is-blocked { color:#f87171; }
+        .sub-action.del:hover  { color:#f87171; }
+
+        .sub-edit-input {
+          flex:1; background:var(--edit-bg); border:1px solid #7dd3fc;
+          border-radius:5px; padding:2px 8px; color:var(--text);
+          font-family:inherit; font-size:12px; outline:none; min-width:0;
+        }
+
+        .sub-add-row {
+          display:flex; align-items:center; gap:6px;
+          padding:4px 6px; border-radius:6px; margin-top:2px;
+          border:1px dashed var(--border2);
+          transition:border-color 0.15s;
+        }
+        .sub-add-row:focus-within { border-color:#7dd3fc; }
+        .sub-add-icon { color:var(--text5); font-size:13px; flex-shrink:0; }
+        .sub-add-input {
+          flex:1; background:transparent; border:none; outline:none;
+          font-family:inherit; font-size:12px; color:var(--text); min-width:0;
+        }
+        .sub-add-input::placeholder { color:var(--text5); }
 
       `}</style>
 
