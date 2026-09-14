@@ -1267,7 +1267,7 @@ export default function App() {
             <div className="modal-title">End Your Day</div>
             <div className="modal-sub">
               {unfinishedCount > 0
-                ? `You have ${unfinishedCount} unfinished task${unfinishedCount > 1 ? "s" : ""}. They'll be rolled over to tomorrow — Blocked tasks stay blocked, others reset to To Do.`
+                ? `You have ${unfinishedCount} unfinished task${unfinishedCount > 1 ? "s" : ""}. They'll be rolled over to tomorrow - Blocked tasks stay blocked, others reset to To Do.`
                 : "All tasks are done — amazing work today! 🎉"}
             </div>
             <div className="modal-stat">
