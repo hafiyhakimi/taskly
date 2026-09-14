@@ -216,6 +216,8 @@ export default function App() {
   const [showHistory, setShowHistory] = useState(false);
   const [historyKeys, setHistoryKeys] = useState([]);
   const [error, setError]             = useState(null);
+  const [remarkModal, setRemarkModal] = useState(null);
+  const [remarkText, setRemarkText]   = useState("");
   // Change user ID modal
   const [showChangeId, setShowChangeId] = useState(false);
   const [sidebarOpen, setSidebarOpen]   = useState(false);
