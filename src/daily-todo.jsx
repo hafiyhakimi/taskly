@@ -97,6 +97,7 @@ const dbToTask = (row) => ({
   rolledFrom: row.rolled_from || null,
   createdAt:  row.created_at,
   subtasks:   row.subtasks || [],
+  remark:     row.remark || null,
 });
 
 const taskToDb = (task, dateKey, userId) => ({
@@ -109,6 +110,7 @@ const taskToDb = (task, dateKey, userId) => ({
   rolled_from: task.rolledFrom || null,
   created_at:  task.createdAt,
   subtasks:    task.subtasks || [],
+  remark:      task.remark || null,
 });
 
 async function fetchDay(dateKey, userId) {
@@ -169,13 +171,15 @@ async function fetchRecurring(userId) {
     .eq("user_id", userId)
     .order("created_at", { ascending: true });
   if (error) throw error;
-  return (data || []).map(r => ({ id: r.id, text: r.text, priority: r.priority, createdAt: r.created_at }));
+  return (data || []).map(r => ({ id: r.id, text: r.text, priority: r.priority, createdAt: r.created_at, enabled: r.enabled !== false, days: r.days || [0,1,2,3,4,5,6] }));
 }
 
 async function upsertRecurring(rec, userId) {
   const { error } = await sb.from("recurring_tasks").upsert({
     id: rec.id, user_id: userId, text: rec.text,
     priority: rec.priority || "medium", created_at: rec.createdAt,
+    enabled: rec.enabled !== false,
+    days: rec.days || [0,1,2,3,4,5,6],
   });
   if (error) throw error;
 }
@@ -228,6 +232,10 @@ export default function App() {
   const [recEditId, setRecEditId]           = useState(null);
   const [recEditText, setRecEditText]       = useState("");
   const [recEditPrio, setRecEditPrio]       = useState("medium");
+  const [recEditDays, setRecEditDays]       = useState([0,1,2,3,4,5,6]);
+  // Bulk select
+  const [selectMode, setSelectMode]   = useState(false);
+  const [selected, setSelected]       = useState(new Set());
   const inputRef = useRef();
 
   // Load tasks when date changes
@@ -246,6 +254,22 @@ export default function App() {
       .catch(e => { if (!cancelled) { setError(e.message); setLoading(false); } });
 
     return () => { cancelled = true; };
+  }, [dateKey, userId]);
+
+  // Fix iPhone PWA stale cache — silently refetch when app comes back into focus
+  useEffect(() => {
+    const onFocus = () => {
+      fetchDay(dateKey, userId)
+        .then(fresh => setTasks(fresh))
+        .catch(() => {});
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") onFocus();
+    });
+    return () => {
+      window.removeEventListener("focus", onFocus);
+    };
   }, [dateKey, userId]);
 
   // Load history keys on mount and after end day
@@ -316,7 +340,9 @@ export default function App() {
         const existRecIds = new Set(
           todayTasks.filter(t => t.id.startsWith("rec_")).map(t => t.id.split("__")[0])
         );
+        const todayDow = new Date().getDay(); // 0=Sun … 6=Sat
         const toAdd = templates
+          .filter(r => r.enabled !== false && (r.days || [0,1,2,3,4,5,6]).includes(todayDow))
           .filter(r => !existRecIds.has("rec_" + r.id))
           .map(r => ({
             id:        `rec_${r.id}__${tk}`,
@@ -337,6 +363,33 @@ export default function App() {
     autoAddRecurring();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
+
+  // ── BULK DELETE ──
+  const toggleSelect = (id) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const selectAll = () => {
+    setSelected(new Set(visibleTasks.map(t => t.id)));
+  };
+
+  const bulkDelete = async () => {
+    const ids = [...selected];
+    const removed = tasks.filter(t => ids.includes(t.id));
+    setTasks(p => p.filter(t => !ids.includes(t.id)));
+    setSelected(new Set());
+    setSelectMode(false);
+    try {
+      await Promise.all(ids.map(id => deleteTask(id, userId)));
+    } catch (e) {
+      setError(e.message);
+      setTasks(p => [...removed, ...p]);
+    }
+  };
 
   // ── SUBTASK CRUD ──
   const updateSubtasks = async (taskId, subtasks) => {
@@ -360,7 +413,7 @@ export default function App() {
   const addRecurring = async () => {
     const text = recInput.trim();
     if (!text) return;
-    const rec = { id: uid(), text, priority: recPriority, createdAt: Date.now() };
+    const rec = { id: uid(), text, priority: recPriority, createdAt: Date.now(), enabled: true, days: [0,1,2,3,4,5,6] };
     setRecurring(p => [...p, rec]);
     setRecInput(""); setRecPriority("medium");
     try { await upsertRecurring(rec, userId); }
@@ -371,7 +424,7 @@ export default function App() {
     const text = recEditText.trim();
     if (!text) { setRecEditId(null); return; }
     const old = recurring.find(r => r.id === id);
-    const updated = { ...old, text, priority: recEditPrio };
+    const updated = { ...old, text, priority: recEditPrio, days: recEditDays || old.days || [0,1,2,3,4,5,6] };
     setRecurring(p => p.map(r => r.id === id ? updated : r));
     setRecEditId(null);
     try { await upsertRecurring(updated, userId); }
@@ -407,15 +460,32 @@ export default function App() {
     } finally { setSaving(false); }
   };
 
-  const setStatus = async (id, status) => {
-    setTasks(p => p.map(t => t.id === id ? { ...t, status } : t));
+  const applyStatus = async (id, status, remark) => {
     const task = tasks.find(t => t.id === id);
     if (!task) return;
-    try { await upsertTask({ ...task, status }, dateKey, userId); }
+    const updated = { ...task, status, remark: remark || task.remark || null };
+    setTasks(p => p.map(t => t.id === id ? updated : t));
+    try { await upsertTask(updated, dateKey, userId); }
     catch (e) {
       setError(e.message);
-      setTasks(p => p.map(t => t.id === id ? { ...t, status: task.status } : t)); // rollback
+      setTasks(p => p.map(t => t.id === id ? task : t));
     }
+  };
+
+  const setStatus = (id, status) => {
+    if (status === "done") {
+      setRemarkModal({ taskId: id, status });
+      setRemarkText("");
+    } else {
+      applyStatus(id, status, null);
+    }
+  };
+
+  const confirmRemark = () => {
+    if (!remarkModal) return;
+    applyStatus(remarkModal.taskId, remarkModal.status, remarkText.trim() || null);
+    setRemarkModal(null);
+    setRemarkText("");
   };
 
   const setPrio = async (id, prio) => {
@@ -1054,9 +1124,111 @@ export default function App() {
         }
         .sub-add-input::placeholder { color:var(--text5); }
 
-      `}</style>
+
+        /* ── BULK SELECT ── */
+        .bulk-bar {
+          display:flex; align-items:center; gap:10px; padding:8px 36px;
+          background:rgba(125,211,252,0.05); border-bottom:1px solid rgba(125,211,252,0.12);
+          animation:fadeIn 0.15s ease;
+        }
+        .bulk-info { font-size:12px; color:var(--text3); flex:1; }
+        .bulk-btn {
+          background:var(--bg-chip); border:1px solid var(--border2); border-radius:6px;
+          padding:5px 14px; color:var(--text3); font-family:inherit; font-size:12px;
+          cursor:pointer; transition:all 0.15s;
+        }
+        .bulk-btn:hover { color:var(--text); border-color:var(--border3); }
+        .bulk-btn.danger { color:#f87171; border-color:rgba(248,113,113,0.3); }
+        .bulk-btn.danger:hover { background:rgba(248,113,113,0.08); }
+        .bulk-btn:disabled { opacity:0.4; cursor:not-allowed; }
+        .select-mode-btn { background:var(--bg-chip) !important; }
+        .select-mode-btn.active { color:#7dd3fc !important; border-color:rgba(125,211,252,0.3) !important; }
+
+        .task-checkbox {
+          font-size:14px; color:var(--text4); flex-shrink:0;
+          transition:color 0.12s; line-height:1;
+        }
+        .task-checkbox.checked { color:#7dd3fc; }
+        .task-main-row.is-selected { background:rgba(125,211,252,0.06); border-radius:8px; }
+
+        /* ── REMARK ── */
+        .task-remark {
+          padding:6px 16px 8px; font-size:11px; color:var(--text4);
+          border-top:1px solid var(--border); font-style:italic; line-height:1.5;
+        }
+        .remark-icon { opacity:0.5; font-style:normal; }
+        .remark-input {
+          width:100%; background:var(--bg-chip); border:1px solid var(--border2);
+          border-radius:8px; padding:10px 14px; color:var(--text); font-family:inherit;
+          font-size:13px; outline:none; resize:vertical; transition:border-color 0.15s;
+        }
+        .remark-input:focus { border-color:#7dd3fc; }
+        .remark-input::placeholder { color:var(--text5); }
+
+        /* ── RECURRING DAY PICKER ── */
+        .rec-item { flex-direction:column; align-items:stretch; gap:0; padding:0; }
+        .rec-edit-block, .rec-view-block { flex:1; display:flex; flex-direction:column; gap:4px; padding:6px 8px; }
+        .rec-toggle {
+          background:none; border:none; cursor:pointer; font-size:11px;
+          padding:6px 6px 0; flex-shrink:0; transition:color 0.12s; align-self:flex-start;
+        }
+        .rec-toggle.on  { color:#86efac; }
+        .rec-toggle.off { color:var(--text5); }
+        .rec-disabled { opacity:0.4; text-decoration:line-through; }
+        .rec-day-picker {
+          display:flex; gap:3px; margin-top:6px;
+        }
+        .rec-day-btn {
+          width:22px; height:22px; border-radius:50%; border:1px solid var(--border2);
+          background:var(--bg-chip2); color:var(--text4); font-size:9px; font-weight:700;
+          cursor:pointer; transition:all 0.12s; padding:0; font-family:inherit;
+        }
+        .rec-day-btn.active { background:#7dd3fc; color:#0c1220; border-color:#7dd3fc; }
+        .rec-days-display {
+          display:flex; gap:3px; margin-top:3px;
+        }
+        .rec-day-dot {
+          width:18px; height:18px; border-radius:50%; display:flex; align-items:center;
+          justify-content:center; font-size:8px; font-weight:700;
+          color:var(--text5); background:var(--bg-chip);
+        }
+        .rec-day-dot.active { color:#7dd3fc; background:rgba(125,211,252,0.12); }
+
+        @media (max-width: 768px) {
+          .bulk-bar { padding:8px 14px; }
+        }
+      \`}</style>
 
       {/* ── END DAY MODAL ── */}
+      {/* ── REMARK MODAL ── */}
+      {remarkModal && (
+        <div className="modal-backdrop" onClick={() => { setRemarkModal(null); }}>
+          <div className="modal" style={{ maxWidth:420 }} onClick={e => e.stopPropagation()}>
+            <div className="modal-title">Mark as Done</div>
+            <div className="modal-sub" style={{ marginBottom:16 }}>
+              Add an optional closing remark — what happened, any notes, blockers resolved?
+            </div>
+            <textarea
+              className="remark-input"
+              placeholder="e.g. Approved by manager, sent at 3pm... (optional)"
+              value={remarkText}
+              onChange={e => setRemarkText(e.target.value)}
+              rows={3}
+              autoFocus
+              onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) confirmRemark(); }}
+            />
+            <div style={{ display:"flex", gap:10, marginTop:14 }}>
+              <button className="modal-confirm" style={{ flex:1 }} onClick={confirmRemark}>
+                Mark Done
+              </button>
+              <button className="modal-cancel" style={{ flex:1 }} onClick={() => setRemarkModal(null)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── CHANGE USER ID MODAL ── */}
       {showChangeId && (
         <div className="modal-backdrop" onClick={() => setShowChangeId(false)}>
@@ -1238,28 +1410,60 @@ export default function App() {
             <div className="recurring-panel">
               {recurring.map(r => (
                 <div key={r.id} className="rec-item">
+                  {/* enabled toggle */}
+                  <button
+                    className={`rec-toggle ${r.enabled !== false ? "on" : "off"}`}
+                    title={r.enabled !== false ? "Enabled" : "Disabled"}
+                    onClick={() => {
+                      const updated = { ...r, enabled: r.enabled === false ? true : false };
+                      setRecurring(p => p.map(x => x.id === r.id ? updated : x));
+                      upsertRecurring(updated, userId).catch(e => setError(e.message));
+                    }}
+                  >{r.enabled !== false ? "●" : "○"}</button>
+
                   {recEditId === r.id ? (
-                    <>
-                      <input
-                        className="rec-edit-input"
-                        value={recEditText}
-                        onChange={e => setRecEditText(e.target.value)}
-                        onKeyDown={e => { if (e.key === "Enter") saveRecurringEdit(r.id); if (e.key === "Escape") setRecEditId(null); }}
-                        autoFocus
-                      />
-                      <select className="rec-prio-sel" value={recEditPrio} onChange={e => setRecEditPrio(e.target.value)}>
-                        {PRIORITY.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
-                      </select>
-                      <button className="rec-action-btn save" onClick={() => saveRecurringEdit(r.id)}>✓</button>
-                      <button className="rec-action-btn cancel" onClick={() => setRecEditId(null)}>✕</button>
-                    </>
+                    <div className="rec-edit-block">
+                      <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+                        <input
+                          className="rec-edit-input"
+                          value={recEditText}
+                          onChange={e => setRecEditText(e.target.value)}
+                          onKeyDown={e => { if (e.key === "Enter") saveRecurringEdit(r.id); if (e.key === "Escape") setRecEditId(null); }}
+                          autoFocus
+                        />
+                        <select className="rec-prio-sel" value={recEditPrio} onChange={e => setRecEditPrio(e.target.value)}>
+                          {PRIORITY.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
+                        </select>
+                        <button className="rec-action-btn save" onClick={() => saveRecurringEdit(r.id)}>✓</button>
+                        <button className="rec-action-btn cancel" onClick={() => setRecEditId(null)}>✕</button>
+                      </div>
+                      <div className="rec-day-picker">
+                        {['S','M','T','W','T','F','S'].map((d, i) => (
+                          <button
+                            key={i}
+                            className={`rec-day-btn ${(recEditDays || r.days || [0,1,2,3,4,5,6]).includes(i) ? "active" : ""}`}
+                            onClick={() => {
+                              const cur = recEditDays || r.days || [0,1,2,3,4,5,6];
+                              setRecEditDays(cur.includes(i) ? cur.filter(x => x !== i) : [...cur, i].sort());
+                            }}
+                          >{d}</button>
+                        ))}
+                      </div>
+                    </div>
                   ) : (
-                    <>
-                      <span className="rec-dot" style={{ background: PRIORITY_MAP[r.priority]?.color || "#64748b" }} />
-                      <span className="rec-text">{r.text}</span>
-                      <button className="rec-action-btn edit" onClick={() => { setRecEditId(r.id); setRecEditText(r.text); setRecEditPrio(r.priority); }}>✎</button>
-                      <button className="rec-action-btn del" onClick={() => removeRecurring(r.id)}>✕</button>
-                    </>
+                    <div className="rec-view-block">
+                      <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                        <span className="rec-dot" style={{ background: PRIORITY_MAP[r.priority]?.color || "#64748b" }} />
+                        <span className={`rec-text ${r.enabled === false ? "rec-disabled" : ""}`}>{r.text}</span>
+                        <button className="rec-action-btn edit" onClick={() => { setRecEditId(r.id); setRecEditText(r.text); setRecEditPrio(r.priority); setRecEditDays(r.days || [0,1,2,3,4,5,6]); }}>✎</button>
+                        <button className="rec-action-btn del" onClick={() => removeRecurring(r.id)}>✕</button>
+                      </div>
+                      <div className="rec-days-display">
+                        {['S','M','T','W','T','F','S'].map((d, i) => (
+                          <span key={i} className={`rec-day-dot ${(r.days || [0,1,2,3,4,5,6]).includes(i) ? "active" : ""}`}>{d}</span>
+                        ))}
+                      </div>
+                    </div>
                   )}
                 </div>
               ))}
@@ -1401,7 +1605,8 @@ export default function App() {
                           confirmId={confirmId} setConfirmId={setConfirmId} del={del}
                           editId={editId} setEditId={setEditId}
                           editText={editText} setEditText={setEditText} commitEdit={commitEdit}
-                          updateSubtasks={updateSubtasks} />
+                          updateSubtasks={updateSubtasks}
+                          selectMode={selectMode} selected={selected} toggleSelect={toggleSelect} />
                       ))}
                     </div>
                   );
@@ -1412,7 +1617,8 @@ export default function App() {
                     confirmId={confirmId} setConfirmId={setConfirmId} del={del}
                     editId={editId} setEditId={setEditId}
                     editText={editText} setEditText={setEditText} commitEdit={commitEdit}
-                    updateSubtasks={updateSubtasks} />
+                    updateSubtasks={updateSubtasks}
+                          selectMode={selectMode} selected={selected} toggleSelect={toggleSelect} />
                 ))
             }
           </div>
@@ -1422,7 +1628,7 @@ export default function App() {
   );
 }
 
-function TaskCard({ task, i, readOnly, setStatus, setPrio, confirmId, setConfirmId, del, editId, setEditId, editText, setEditText, commitEdit, updateSubtasks }) {
+function TaskCard({ task, i, readOnly, setStatus, setPrio, confirmId, setConfirmId, del, editId, setEditId, editText, setEditText, commitEdit, updateSubtasks, selectMode, selected, toggleSelect }) {
   const s         = STATUS_MAP[task.status];
   const p         = PRIORITY_MAP[task.priority || "medium"];
   const isEditing = editId === task.id;
@@ -1470,7 +1676,15 @@ function TaskCard({ task, i, readOnly, setStatus, setPrio, confirmId, setConfirm
       style={{ animationDelay:`${i * 0.03}s` }}
     >
       {/* ── Main row ── */}
-      <div className="task-main-row">
+      <div className={`task-main-row ${selectMode && selected?.has(task.id) ? "is-selected" : ""}`}
+        onClick={selectMode ? () => toggleSelect(task.id) : undefined}
+        style={selectMode ? { cursor:"pointer" } : {}}
+      >
+        {selectMode && (
+          <span className={`task-checkbox ${selected?.has(task.id) ? "checked" : ""}`}>
+            {selected?.has(task.id) ? "■" : "□"}
+          </span>
+        )}
         <select
           className="status-pill"
           value={task.status}
@@ -1490,7 +1704,17 @@ function TaskCard({ task, i, readOnly, setStatus, setPrio, confirmId, setConfirm
         >
           {PRIORITY.map(pr => <option key={pr.key} value={pr.key} style={{ color:pr.color }}>{pr.label}</option>)}
         </select>
+        <select
+          className="p-badge-select"
+          value={task.priority || "medium"}
+          disabled={readOnly}
+          style={{ color:p.color }}
+          onChange={e => setPrio(task.id, e.target.value)}
+        >
+          {PRIORITY.map(pr => <option key={pr.key} value={pr.key} style={{ color:pr.color }}>{pr.label}</option>)}
+        </select>
 
+        {task.rolledFrom && <span className="rolled-tag">rolled</span>}
         {task.rolledFrom && <span className="rolled-tag">rolled</span>}
 
         {isEditing ? (
@@ -1535,6 +1759,13 @@ function TaskCard({ task, i, readOnly, setStatus, setPrio, confirmId, setConfirm
           </>
         )}
       </div>
+
+      {/* ── Remark ── */}
+      {task.remark && task.status === "done" && (
+        <div className="task-remark">
+          <span className="remark-icon">✎</span> {task.remark}
+        </div>
+      )}
 
       {/* ── Subtasks panel ── */}
       {showSubs && (
