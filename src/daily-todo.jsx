@@ -1197,7 +1197,7 @@ export default function App() {
         @media (max-width: 768px) {
           .bulk-bar { padding:8px 14px; }
         }
-      \`}</style>
+      `}</style>
 
       {/* ── END DAY MODAL ── */}
       {/* ── REMARK MODAL ── */}
