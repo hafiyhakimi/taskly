@@ -233,6 +233,9 @@ export default function App() {
   const [recEditText, setRecEditText]       = useState("");
   const [recEditPrio, setRecEditPrio]       = useState("medium");
   const [recEditDays, setRecEditDays]       = useState([0,1,2,3,4,5,6]);
+  // Done with remark
+  const [remarkModal, setRemarkModal]       = useState(null);
+  const [remarkText, setRemarkText]         = useState("");
   // Bulk select
   const [selectMode, setSelectMode]   = useState(false);
   const [selected, setSelected]       = useState(new Set());
@@ -374,7 +377,7 @@ export default function App() {
   };
 
   const selectAll = () => {
-    setSelected(new Set(visibleTasks.map(t => t.id)));
+    setSelected(new Set(tasks.filter(t => filter === 'all' || t.status === filter).map(t => t.id)));
   };
 
   const bulkDelete = async () => {
