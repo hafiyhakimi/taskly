@@ -216,8 +216,6 @@ export default function App() {
   const [showHistory, setShowHistory] = useState(false);
   const [historyKeys, setHistoryKeys] = useState([]);
   const [error, setError]             = useState(null);
-  const [remarkModal, setRemarkModal] = useState(null);
-  const [remarkText, setRemarkText]   = useState("");
   // Change user ID modal
   const [showChangeId, setShowChangeId] = useState(false);
   const [sidebarOpen, setSidebarOpen]   = useState(false);
@@ -839,36 +837,45 @@ export default function App() {
         .group-line { flex:1; height:1px; background:var(--border); }
 
         .task-card {
-          display:flex; align-items:center; gap:12px;
-          padding:11px 16px; border-radius:10px; border:1px solid var(--border2);
+          display:flex; flex-direction:column;
+          border-radius:10px; border:1px solid var(--border);
           background:var(--bg-card); margin-bottom:6px;
           transition:all 0.18s; animation:taskIn 0.2s ease both; position:relative;
+          overflow:hidden;
         }
         @keyframes taskIn { from { opacity:0; transform:translateY(5px); } to { opacity:1; transform:translateY(0); } }
-        .task-card:hover      { border-color:var(--border2); background:var(--bg-card-hover); transform:translateX(2px); }
-        .task-card.is-done    { opacity:0.42; }
-        .task-card.confirming { border-color:rgba(248,113,113,0.35) !important; background:rgba(248,113,113,0.04) !important; transform:none !important; }
-        .task-card.rolled     { border-left:2px solid rgba(251,191,36,0.4); }
+        .task-card:hover      { border-color:var(--border2); background:var(--bg-card-hover); }
+        .task-card.is-done    { opacity:0.45; }
+        .task-card.confirming { border-color:rgba(248,113,113,0.35) !important; background:rgba(248,113,113,0.04) !important; }
+        .task-card.rolled::after {
+          content:""; position:absolute; left:0; top:0; bottom:0; width:2px;
+          background:rgba(251,191,36,0.5);
+        }
 
-        .rolled-tag { font-size:9px; color:#92400e; background:rgba(251,191,36,0.08); border-radius:4px; padding:1px 5px; white-space:nowrap; flex-shrink:0; }
+        .rolled-tag {
+          font-size:11px; color:rgba(251,191,36,0.6); flex-shrink:0;
+          line-height:1; padding:0 2px; cursor:default;
+        }
 
         .status-pill {
           appearance:none; -webkit-appearance:none;
           border-radius:20px; padding:3px 10px; font-family:inherit;
           font-size:10px; font-weight:600; letter-spacing:0.07em; text-transform:uppercase;
           cursor:pointer; outline:none; border:1px solid transparent; white-space:nowrap;
-          flex-shrink:0; min-width:94px; text-align:center; transition:all 0.15s;
+          flex-shrink:0; min-width:86px; text-align:center; transition:all 0.15s;
         }
         .status-pill:disabled { cursor:default; }
 
-        .p-badge-select {
-          appearance:none; -webkit-appearance:none;
-          font-size:9px; font-weight:600; letter-spacing:0.07em; text-transform:uppercase;
-          padding:3px 8px; border-radius:20px; background:var(--bg-chip); border:1px solid var(--border2);
-          flex-shrink:0; cursor:pointer; font-family:inherit; outline:none; transition:all 0.15s;
+        /* Priority dot — replaces p-badge-select */
+        .prio-dot {
+          width:8px; height:8px; border-radius:50%; flex-shrink:0;
+          border:none; cursor:pointer; padding:0; transition:transform 0.15s, opacity 0.15s;
+          margin-right:2px;
         }
-        .p-badge-select:disabled { cursor:default; }
+        .prio-dot:hover:not(:disabled) { transform:scale(1.5); }
+        .prio-dot:disabled { cursor:default; }
 
+        .task-text-wrap { flex:1; display:flex; align-items:center; gap:6px; min-width:0; }
         .task-text      { flex:1; font-size:13px; color:var(--text2); line-height:1.45; min-width:0; }
         .task-text.done { text-decoration:line-through; color:var(--text5); }
 
@@ -878,12 +885,16 @@ export default function App() {
         }
 
         .icon-btn {
-          background:none; border:none; cursor:pointer; color:var(--text4); font-size:13px;
-          padding:4px; border-radius:5px; transition:all 0.12s; line-height:1; flex-shrink:0; font-family:inherit;
+          background:none; border:none; cursor:pointer; color:var(--text5); font-size:13px;
+          padding:5px 6px; border-radius:6px; transition:all 0.12s; line-height:1; flex-shrink:0; font-family:inherit;
+          opacity:0; /* hidden by default, shown on card hover */
         }
-        .icon-btn:hover     { color:var(--text); background:var(--bg-chip); }
+        .task-main-row:hover .icon-btn,
+        .task-main-row:focus-within .icon-btn { opacity:1; }
+        .icon-btn:hover     { color:var(--text); background:var(--bg-chip2); }
         .icon-btn.del:hover { color:#f87171; background:rgba(248,113,113,0.08); }
-        .icon-btn:disabled  { opacity:0.2; cursor:not-allowed; }
+        .icon-btn:disabled  { opacity:0.15 !important; cursor:not-allowed; }
+        .icon-btn.sub-toggle-btn { opacity:1; } /* always visible */
 
         .confirm-row   { display:flex; align-items:center; gap:8px; margin-left:auto; flex-shrink:0; animation:fadeIn 0.15s ease; }
         @keyframes fadeIn { from { opacity:0; } to { opacity:1; } }
@@ -965,6 +976,7 @@ export default function App() {
 
         /* ── MOBILE BREAKPOINT ── */
         @media (max-width: 768px) {
+          .icon-btn { opacity:1 !important; } /* always visible on touch */
           .hamburger { display:flex; }
           .sidebar-close-row { display:flex; }
           .sidebar {
@@ -1039,10 +1051,9 @@ export default function App() {
         .rec-add-input::placeholder { color:var(--text5); }
 
         /* ── TASK CARD LAYOUT ── */
-        .task-card { flex-direction:column; align-items:stretch; padding:0; gap:0; }
         .task-main-row {
-          display:flex; align-items:center; gap:12px;
-          padding:11px 16px;
+          display:flex; align-items:center; gap:10px;
+          padding:10px 14px;
         }
 
         /* ── SUBTASK PROGRESS CHIP ── */
@@ -1269,7 +1280,7 @@ export default function App() {
             <div className="modal-title">End Your Day</div>
             <div className="modal-sub">
               {unfinishedCount > 0
-                ? `You have ${unfinishedCount} unfinished task${unfinishedCount > 1 ? "s" : ""}. They'll be rolled over to tomorrow - Blocked tasks stay blocked, others reset to To Do.`
+                ? `You have ${unfinishedCount} unfinished task${unfinishedCount > 1 ? "s" : ""}. They'll be rolled over to tomorrow — Blocked tasks stay blocked, others reset to To Do.`
                 : "All tasks are done — amazing work today! 🎉"}
             </div>
             <div className="modal-stat">
@@ -1697,27 +1708,9 @@ function TaskCard({ task, i, readOnly, setStatus, setPrio, confirmId, setConfirm
           {STATUSES.map(st => <option key={st.key} value={st.key}>{st.label}</option>)}
         </select>
 
-        <select
-          className="p-badge-select"
-          value={task.priority || "medium"}
-          disabled={readOnly}
-          style={{ color:p.color }}
-          onChange={e => setPrio(task.id, e.target.value)}
-        >
-          {PRIORITY.map(pr => <option key={pr.key} value={pr.key} style={{ color:pr.color }}>{pr.label}</option>)}
-        </select>
-        <select
-          className="p-badge-select"
-          value={task.priority || "medium"}
-          disabled={readOnly}
-          style={{ color:p.color }}
-          onChange={e => setPrio(task.id, e.target.value)}
-        >
-          {PRIORITY.map(pr => <option key={pr.key} value={pr.key} style={{ color:pr.color }}>{pr.label}</option>)}
-        </select>
-
-        {task.rolledFrom && <span className="rolled-tag">rolled</span>}
-        {task.rolledFrom && <span className="rolled-tag">rolled</span>}
+        {task.rolledFrom && (
+          <span className="rolled-tag" title={`Rolled from ${task.rolledFrom}`}>↩</span>
+        )}
 
         {isEditing ? (
           <input
@@ -1727,11 +1720,24 @@ function TaskCard({ task, i, readOnly, setStatus, setPrio, confirmId, setConfirm
             onBlur={() => commitEdit(task.id)}
           />
         ) : (
-          <span
-            className={`task-text ${task.status === "done" ? "done" : ""}`}
-            onDoubleClick={() => { if (!readOnly) { setEditId(task.id); setEditText(task.text); } }}
-          >
-            {task.text}
+          <span className="task-text-wrap">
+            <button
+              className="prio-dot"
+              style={{ background: p.color }}
+              disabled={readOnly}
+              title={`Priority: ${p.label} — click to change`}
+              onClick={() => {
+                const order = ["high","medium","low"];
+                const next = order[(order.indexOf(task.priority || "medium") + 1) % 3];
+                setPrio(task.id, next);
+              }}
+            />
+            <span
+              className={`task-text ${task.status === "done" ? "done" : ""}`}
+              onDoubleClick={() => { if (!readOnly) { setEditId(task.id); setEditText(task.text); } }}
+            >
+              {task.text}
+            </span>
           </span>
         )}
 
