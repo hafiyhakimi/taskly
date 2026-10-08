@@ -90,27 +90,29 @@ const formatDisplay = (key) => {
 // Row shape: { id, user_id, date_key, text, status, priority, rolled_from, created_at }
 
 const dbToTask = (row) => ({
-  id:         row.id,
-  text:       row.text,
-  status:     row.status,
-  priority:   row.priority,
-  rolledFrom: row.rolled_from || null,
-  createdAt:  row.created_at,
-  subtasks:   row.subtasks || [],
-  remark:     row.remark || null,
+  id:          row.id,
+  text:        row.text,
+  status:      row.status,
+  priority:    row.priority,
+  rolledFrom:  row.rolled_from || null,
+  createdAt:   row.created_at,
+  subtasks:    row.subtasks || [],
+  remark:      row.remark || null,
+  followUpOf:  row.follow_up_of || null,
 });
 
 const taskToDb = (task, dateKey, userId) => ({
-  id:          task.id,
-  user_id:     userId,
-  date_key:    dateKey,
-  text:        task.text,
-  status:      task.status,
-  priority:    task.priority || "medium",
-  rolled_from: task.rolledFrom || null,
-  created_at:  task.createdAt,
-  subtasks:    task.subtasks || [],
-  remark:      task.remark || null,
+  id:           task.id,
+  user_id:      userId,
+  date_key:     dateKey,
+  text:         task.text,
+  status:       task.status,
+  priority:     task.priority || "medium",
+  rolled_from:  task.rolledFrom || null,
+  created_at:   task.createdAt,
+  subtasks:     task.subtasks || [],
+  remark:       task.remark || null,
+  follow_up_of: task.followUpOf || null,
 });
 
 async function fetchDay(dateKey, userId) {
@@ -491,6 +493,38 @@ export default function App() {
     setRemarkText("");
   };
 
+  // ── FOLLOW-UP TASK ──
+  const createFollowUp = async (parentId, text, prio) => {
+    if (!text.trim()) return;
+    const parent = tasks.find(t => t.id === parentId);
+    const newTask = {
+      id: uid(),
+      text: text.trim(),
+      status: "todo",
+      priority: prio || parent?.priority || "medium",
+      rolledFrom: null,
+      createdAt: Date.now(),
+      subtasks: [],
+      remark: null,
+      followUpOf: parentId,
+    };
+    setTasks(p => [...p, newTask]);
+    try { await upsertTask(newTask, dateKey, userId); }
+    catch (e) { setError(e.message); setTasks(p => p.filter(t => t.id !== newTask.id)); }
+  };
+
+  const updateRemark = async (id, remark) => {
+    const task = tasks.find(t => t.id === id);
+    if (!task) return;
+    const updated = { ...task, remark: remark || null };
+    setTasks(p => p.map(t => t.id === id ? updated : t));
+    try { await upsertTask(updated, dateKey, userId); }
+    catch (e) {
+      setError(e.message);
+      setTasks(p => p.map(t => t.id === id ? task : t));
+    }
+  };
+
   const setPrio = async (id, prio) => {
     setTasks(p => p.map(t => t.id === id ? { ...t, priority: prio } : t));
     const task = tasks.find(t => t.id === id);
@@ -604,59 +638,59 @@ export default function App() {
   return (
     <div data-theme={theme} style={{ width:"100vw", height:"100vh", display:"flex", flexDirection:"column", background:"var(--bg)", overflow:"hidden", fontFamily:"'Plus Jakarta Sans', sans-serif", color:"var(--text)" }}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600&family=Fraunces:opsz,wght@9..144,700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap');
         *, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
 
         /* ── THEME VARIABLES ── */
         [data-theme="dark"] {
-          /* Backgrounds — stepped so each layer is visibly distinct */
-          --bg:              #0f1117;
-          --bg-sidebar:      #161b27;
-          --bg-card:         #1c2333;
-          --bg-card-hover:   #222b3d;
-          --bg-input:        #1c2333;
-          --bg-chip:         #222b3d;
-          --bg-chip2:        #2a3550;
-          --bg-modal:        #161b27;
-          --edit-bg:         #0f1117;
-          --confirm-no-bg:   #222b3d;
-          --modal-confirm-cancel-bg: #222b3d;
-          /* Borders — clearly visible against backgrounds */
-          --border:          #2a3550;
-          --border2:         #344060;
-          --border3:         #4a5880;
-          /* Text — high contrast hierarchy */
-          --text:            #f0f4ff;
-          --text2:           #c8d3ea;
-          --text3:           #8899bb;
-          --text4:           #6677aa;
-          --text5:           #4a5880;
+          --bg:              #0c1021;
+          --bg-sidebar:      #111827;
+          --bg-card:         #171f2e;
+          --bg-card-hover:   #1e2840;
+          --bg-input:        #171f2e;
+          --bg-chip:         #1e2840;
+          --bg-chip2:        #263354;
+          --bg-modal:        #111827;
+          --edit-bg:         #0c1021;
+          --confirm-no-bg:   #1e2840;
+          --modal-confirm-cancel-bg: #1e2840;
+          --border:          #263354;
+          --border2:         #2e3d65;
+          --border3:         #3d527a;
+          --text:            #eef2ff;
+          --text2:           #c4cfeb;
+          --text3:           #7d90c0;
+          --text4:           #5469a0;
+          --text5:           #374880;
           --text-title:      #ffffff;
-          --section-lbl:     #5566aa;
-          --footer-txt:      #3a4a70;
-          --loading-txt:     #4a5880;
-          --scroll-thumb:    #2a3550;
+          --section-lbl:     #4a60a0;
+          --footer-txt:      #2e3d65;
+          --loading-txt:     #374880;
+          --scroll-thumb:    #263354;
           --date-scheme:     dark;
+          --accent:          #6ea8fe;
+          --accent-glow:     rgba(110,168,254,0.18);
+          --sidebar-glow:    radial-gradient(ellipse at top left, rgba(99,102,241,0.12) 0%, transparent 60%);
         }
         [data-theme="light"] {
-          /* Backgrounds — warm white base, clearly differentiated layers */
-          --bg:              #eef1f7;
+          --bg:              #f0f4fc;
           --bg-sidebar:      #ffffff;
           --bg-card:         #ffffff;
-          --bg-card-hover:   #f5f7fc;
+          --bg-card-hover:   #f6f8ff;
           --bg-input:        #ffffff;
-          --bg-chip:         #eef1f7;
-          --bg-chip2:        #e0e5f0;
+          --bg-chip:         #eef1fa;
+          --bg-chip2:        #e2e8f8;
           --bg-modal:        #ffffff;
-          --edit-bg:         #f5f7fc;
-          --confirm-no-bg:   #eef1f7;
-          --modal-confirm-cancel-bg: #eef1f7;
-          /* Borders — clearly visible */
-          --border:          #d0d8e8;
-          --border2:         #b8c4d8;
-          --border3:         #8899bb;
-          /* Text — dark, clearly readable hierarchy */
-          --text:            #0d1117;
+          --edit-bg:         #f6f8ff;
+          --confirm-no-bg:   #eef1fa;
+          --modal-confirm-cancel-bg: #eef1fa;
+          --border:          #d5ddf0;
+          --border2:         #bdc9e4;
+          --border3:         #8da0cc;
+          --text:            #0f172a;
+          --accent:          #4f6ef7;
+          --accent-glow:     rgba(79,110,247,0.12);
+          --sidebar-glow:    radial-gradient(ellipse at top left, rgba(99,102,241,0.07) 0%, transparent 60%);
           --text2:           #1e2a3a;
           --text3:           #3a4a6a;
           --text4:           #4a5a7a;
@@ -677,25 +711,26 @@ export default function App() {
 
         /* ── SIDEBAR ── */
         .sidebar {
-          width:248px; min-width:248px; background:var(--bg-sidebar);
-          border-right:1px solid var(--border2); display:flex; flex-direction:column;
+          width:256px; min-width:256px; background:var(--bg-sidebar);
+          border-right:1px solid var(--border); display:flex; flex-direction:column;
           padding:28px 20px 20px; overflow-y:auto;
           animation:fadeSlide 0.4s ease both;
+          background-image:var(--sidebar-glow);
         }
         @keyframes fadeSlide { from { opacity:0; transform:translateX(-12px); } to { opacity:1; transform:translateX(0); } }
 
-        .brand { margin-bottom:24px; }
-        .brand-name { font-family:'Fraunces',Georgia,serif; font-size:22px; font-weight:700; color:var(--text-title); letter-spacing:-0.5px; line-height:1; }
-        .brand-sub  { font-size:11px; color:var(--text3); letter-spacing:0.06em; text-transform:uppercase; margin-top:5px; }
+        .brand { margin-bottom:24px; padding-bottom:20px; border-bottom:1px solid var(--border); }
+        .brand-name { font-family:'Fraunces',Georgia,serif; font-size:24px; font-weight:700; color:var(--text-title); letter-spacing:-0.8px; line-height:1; background:linear-gradient(135deg, #a5b4fc, #6ea8fe); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; }
+        .brand-sub  { font-size:10px; color:var(--text4); letter-spacing:0.1em; text-transform:uppercase; margin-top:6px; }
 
-        .user-chip { display:flex; align-items:center; gap:6px; background:var(--bg-chip); border-radius:6px; padding:6px 10px; margin-bottom:20px; }
-        .user-dot  { width:6px; height:6px; border-radius:50%; background:#86efac; flex-shrink:0; }
-        .user-id   { font-size:10px; color:var(--text4); letter-spacing:0.04em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .user-chip { display:flex; align-items:center; gap:6px; background:var(--bg-chip); border-radius:8px; padding:7px 10px; margin-bottom:20px; border:1px solid var(--border); }
+        .user-dot  { width:7px; height:7px; border-radius:50%; background:#4ade80; flex-shrink:0; box-shadow:0 0 6px rgba(74,222,128,0.5); }
+        .user-id   { font-size:10px; color:var(--text3); letter-spacing:0.04em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
 
-        .progress-section { margin-bottom:24px; }
-        .progress-label { display:flex; justify-content:space-between; font-size:11px; color:var(--text3); text-transform:uppercase; letter-spacing:0.07em; margin-bottom:8px; }
-        .progress-track { height:5px; background:var(--border2); border-radius:10px; overflow:hidden; }
-        .progress-fill  { height:100%; background:linear-gradient(90deg,#7dd3fc,#86efac); border-radius:10px; transition:width 0.5s cubic-bezier(.4,0,.2,1); }
+        .progress-section { margin-bottom:20px; }
+        .progress-label { display:flex; justify-content:space-between; font-size:11px; color:var(--text3); text-transform:uppercase; letter-spacing:0.07em; margin-bottom:8px; font-weight:600; }
+        .progress-track { height:6px; background:var(--border2); border-radius:10px; overflow:hidden; }
+        .progress-fill  { height:100%; background:linear-gradient(90deg,#6ea8fe,#4ade80); border-radius:10px; transition:width 0.5s cubic-bezier(.4,0,.2,1); box-shadow:0 0 8px rgba(110,168,254,0.4); }
 
         .section-label { font-size:10px; color:var(--text4); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:6px; padding-left:4px; margin-top:4px; font-weight:600; }
 
@@ -706,7 +741,7 @@ export default function App() {
           text-align:left; transition:all 0.15s; width:100%; font-family:inherit;
         }
         .filter-item:hover  { color:var(--text); background:var(--bg-chip); }
-        .filter-item.active { color:var(--text); background:var(--bg-chip2); border-left:2px solid #7dd3fc; }
+        .filter-item.active { color:var(--text); background:var(--accent-glow); border-left:2px solid var(--accent); }
         .filter-dot   { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
         .filter-count { margin-left:auto; font-size:11px; background:var(--bg-chip2); padding:1px 7px; border-radius:20px; color:var(--text3); }
 
@@ -743,16 +778,16 @@ export default function App() {
         .history-item.active { color:#7dd3fc; background:var(--bg-chip); }
         .history-badge { font-size:10px; color:var(--text4); background:var(--bg-chip2); padding:1px 6px; border-radius:10px; }
 
-        .sidebar-footer { margin-top:auto; padding-top:16px; border-top:1px solid var(--border2); font-size:11px; color:var(--text4); text-align:center; letter-spacing:0.04em; }
+        .sidebar-footer { margin-top:auto; padding-top:16px; border-top:1px solid var(--border); font-size:11px; color:var(--text4); text-align:center; letter-spacing:0.04em; }
 
         /* ── MAIN ── */
         .main { flex:1; display:flex; flex-direction:column; overflow:hidden; min-width:0; }
 
-        .topbar { padding:24px 36px 18px; border-bottom:1px solid var(--border2); flex-shrink:0; animation:fadeDown 0.4s ease both; }
+        .topbar { padding:20px 36px 16px; border-bottom:1px solid var(--border); flex-shrink:0; animation:fadeDown 0.4s ease both; background:var(--bg); }
         @keyframes fadeDown { from { opacity:0; transform:translateY(-8px); } to { opacity:1; transform:translateY(0); } }
         .topbar-row { display:flex; align-items:flex-end; justify-content:space-between; gap:20px; flex-wrap:wrap; }
-        .page-title { font-family:'Fraunces',Georgia,serif; font-size:28px; font-weight:700; color:var(--text-title); letter-spacing:-0.8px; line-height:1; }
-        .page-sub   { font-size:12px; color:var(--text3); margin-top:4px; }
+        .page-title { font-family:'Fraunces',Georgia,serif; font-size:30px; font-weight:700; color:var(--text-title); letter-spacing:-1px; line-height:1.1; }
+        .page-sub   { font-size:12px; color:var(--text3); margin-top:5px; letter-spacing:0.01em; }
 
         .date-nav { display:flex; align-items:center; gap:8px; }
         .date-picker {
@@ -767,8 +802,8 @@ export default function App() {
           cursor:pointer; transition:all 0.15s; line-height:1; white-space:nowrap;
         }
         .nav-btn:hover      { color:var(--text); border-color:var(--border3); }
-        .nav-btn.today-btn  { color:#7dd3fc; border-color:rgba(125,211,252,0.25); background:rgba(125,211,252,0.06); }
-        .nav-btn.today-btn:hover { background:rgba(125,211,252,0.12); }
+        .nav-btn.today-btn  { color:var(--accent); border-color:var(--accent-glow); background:var(--accent-glow); }
+        .nav-btn.today-btn:hover { background:rgba(110,168,254,0.18); }
 
         .search-wrap { position:relative; }
         .search-input {
@@ -776,7 +811,7 @@ export default function App() {
           padding:9px 14px 9px 34px; color:var(--text); font-family:inherit; font-size:13px;
           outline:none; width:200px; transition:border-color 0.15s;
         }
-        .search-input:focus { border-color:#7dd3fc; }
+        .search-input:focus { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-glow); }
         .search-input::placeholder { color:var(--text5); }
         .search-icon { position:absolute; left:11px; top:50%; transform:translateY(-50%); color:var(--text5); font-size:14px; pointer-events:none; }
 
@@ -785,13 +820,13 @@ export default function App() {
         @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
 
         /* ── ADD FORM ── */
-        .input-row { display:flex; gap:10px; padding:12px 36px; border-bottom:1px solid var(--border2); flex-shrink:0; align-items:center; }
+        .input-row { display:flex; gap:10px; padding:12px 36px; border-bottom:1px solid var(--border); flex-shrink:0; align-items:center; background:var(--bg); }
         .task-input {
           flex:1; background:var(--bg-input); border:1px solid var(--border2); border-radius:8px;
           padding:10px 16px; color:var(--text); font-family:inherit; font-size:14px;
           outline:none; transition:border-color 0.15s; min-width:0;
         }
-        .task-input:focus    { border-color:#7dd3fc; }
+        .task-input:focus    { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-glow); }
         .task-input::placeholder { color:var(--text5); }
         .task-input:disabled { opacity:0.4; cursor:not-allowed; }
 
@@ -804,11 +839,12 @@ export default function App() {
         .prio-select:disabled { opacity:0.4; cursor:not-allowed; }
 
         .add-btn {
-          background:linear-gradient(135deg,#7dd3fc,#60a5fa); border:none; border-radius:8px;
-          padding:10px 20px; color:#0c1220; font-family:inherit; font-size:13px; font-weight:600;
-          cursor:pointer; transition:all 0.15s; white-space:nowrap;
+          background:linear-gradient(135deg,#6ea8fe,#818cf8); border:none; border-radius:8px;
+          padding:10px 20px; color:#fff; font-family:inherit; font-size:13px; font-weight:600;
+          cursor:pointer; transition:all 0.18s; white-space:nowrap;
+          box-shadow:0 2px 10px rgba(110,168,254,0.25);
         }
-        .add-btn:hover    { transform:translateY(-1px); box-shadow:0 4px 16px rgba(125,211,252,0.25); }
+        .add-btn:hover    { transform:translateY(-1px); box-shadow:0 5px 18px rgba(110,168,254,0.4); }
         .add-btn:active   { transform:translateY(0); }
         .add-btn:disabled { opacity:0.35; cursor:not-allowed; transform:none; box-shadow:none; }
 
@@ -841,18 +877,19 @@ export default function App() {
 
         .task-card {
           display:flex; flex-direction:column;
-          border-radius:10px; border:1px solid var(--border);
-          background:var(--bg-card); margin-bottom:6px;
-          transition:all 0.18s; animation:taskIn 0.2s ease both; position:relative;
+          border-radius:12px; border:1px solid var(--border);
+          background:var(--bg-card); margin-bottom:7px;
+          transition:border-color 0.18s, background 0.18s, box-shadow 0.18s;
+          animation:taskIn 0.22s ease both; position:relative;
           overflow:hidden;
         }
-        @keyframes taskIn { from { opacity:0; transform:translateY(5px); } to { opacity:1; transform:translateY(0); } }
-        .task-card:hover      { border-color:var(--border2); background:var(--bg-card-hover); }
-        .task-card.is-done    { opacity:0.45; }
-        .task-card.confirming { border-color:rgba(248,113,113,0.35) !important; background:rgba(248,113,113,0.04) !important; }
+        @keyframes taskIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
+        .task-card:hover      { border-color:var(--border2); background:var(--bg-card-hover); box-shadow:0 2px 12px rgba(0,0,0,0.08); }
+        .task-card.is-done    { opacity:0.4; }
+        .task-card.confirming { border-color:rgba(248,113,113,0.4) !important; background:rgba(248,113,113,0.04) !important; }
         .task-card.rolled::after {
-          content:""; position:absolute; left:0; top:0; bottom:0; width:2px;
-          background:rgba(251,191,36,0.5);
+          content:""; position:absolute; left:0; top:0; bottom:0; width:3px;
+          background:linear-gradient(180deg, rgba(251,191,36,0.7), rgba(251,191,36,0.2));
         }
 
         .rolled-tag {
@@ -918,8 +955,8 @@ export default function App() {
         .modal-stat-num  { font-family:'Fraunces',Georgia,serif; font-size:26px; font-weight:700; line-height:1; }
         .modal-stat-lbl  { font-size:10px; color:var(--text3); text-transform:uppercase; letter-spacing:0.07em; margin-top:4px; }
         .modal-actions   { display:flex; gap:10px; }
-        .modal-confirm   { flex:1; background:linear-gradient(135deg,#fbbf24,#f59e0b); border:none; border-radius:8px; padding:12px; color:#0c1220; font-family:inherit; font-size:14px; font-weight:600; cursor:pointer; transition:all 0.15s; }
-        .modal-confirm:hover    { transform:translateY(-1px); box-shadow:0 4px 14px rgba(251,191,36,0.3); }
+        .modal-confirm   { flex:1; background:linear-gradient(135deg,#6ea8fe,#818cf8); border:none; border-radius:8px; padding:12px; color:#fff; font-family:inherit; font-size:14px; font-weight:600; cursor:pointer; transition:all 0.18s; }
+        .modal-confirm:hover    { transform:translateY(-1px); box-shadow:0 4px 18px rgba(110,168,254,0.45); }
         .modal-confirm:disabled { opacity:0.5; cursor:not-allowed; transform:none; }
         .modal-cancel    { background:var(--modal-confirm-cancel-bg); border:1px solid var(--border2); border-radius:8px; padding:12px 20px; color:var(--text2); font-family:inherit; font-size:14px; cursor:pointer; transition:all 0.15s; }
         .modal-cancel:hover { color:var(--text); }
@@ -1141,6 +1178,43 @@ export default function App() {
         .sub-add-input::placeholder { color:var(--text5); }
 
 
+        /* ── FOLLOW-UP ── */
+        .followup-panel {
+          border-top:1px solid var(--border);
+          padding:10px 14px 12px;
+          background:rgba(110,168,254,0.03);
+        }
+        .followup-header {
+          display:flex; align-items:center; gap:5px;
+          font-size:10px; color:var(--accent); text-transform:uppercase;
+          letter-spacing:0.08em; font-weight:600; margin-bottom:8px; opacity:0.8;
+        }
+        .followup-header-icon { font-size:12px; }
+        .followup-input-row { display:flex; gap:6px; align-items:center; }
+        .followup-input {
+          flex:1; background:var(--bg-input); border:1px solid var(--border2);
+          border-radius:7px; padding:7px 12px; color:var(--text); font-family:inherit;
+          font-size:12px; outline:none; transition:border-color 0.15s; min-width:0;
+        }
+        .followup-input:focus { border-color:var(--accent); }
+        .followup-input::placeholder { color:var(--text5); }
+        .followup-add-btn {
+          background:var(--accent-glow); border:1px solid rgba(110,168,254,0.3);
+          border-radius:6px; padding:5px 12px; color:var(--accent); font-family:inherit;
+          font-size:12px; font-weight:600; cursor:pointer; transition:all 0.12s; flex-shrink:0;
+        }
+        .followup-add-btn:hover:not(:disabled) { background:rgba(110,168,254,0.2); }
+        .followup-add-btn:disabled { opacity:0.35; cursor:not-allowed; }
+        .followup-count-chip {
+          font-size:10px; color:var(--accent); background:var(--accent-glow);
+          border:1px solid rgba(110,168,254,0.2); border-radius:20px;
+          padding:1px 7px; flex-shrink:0; font-weight:600; letter-spacing:0.03em;
+        }
+        .parent-link-badge {
+          color:var(--accent); opacity:0.6; font-size:11px; font-style:normal;
+        }
+        .icon-btn.active-followup { color:var(--accent) !important; opacity:1 !important; }
+
         /* ── BULK SELECT ── */
         .bulk-bar {
           display:flex; align-items:center; gap:10px; padding:8px 36px;
@@ -1169,10 +1243,24 @@ export default function App() {
 
         /* ── REMARK ── */
         .task-remark {
-          padding:6px 16px 8px; font-size:11px; color:var(--text4);
-          border-top:1px solid var(--border); font-style:italic; line-height:1.5;
+          padding:5px 16px 8px; font-size:11px; color:var(--text4);
+          border-top:1px solid var(--border); line-height:1.5;
+          min-height:28px; display:flex; align-items:center;
         }
+        .remark-text {
+          flex:1; font-style:italic; cursor:pointer; border-radius:4px;
+          padding:2px 4px; transition:background 0.12s, color 0.12s;
+          display:flex; align-items:center; gap:4px;
+        }
+        .remark-text:hover { background:var(--bg-chip); color:var(--text3); }
         .remark-icon { opacity:0.5; font-style:normal; }
+        .remark-add-hint { color:var(--text5); font-style:italic; font-size:10px; opacity:0.6; }
+        .remark-edit-input {
+          flex:1; background:var(--bg-chip); border:1px solid #7dd3fc;
+          border-radius:6px; padding:4px 10px; color:var(--text); font-family:inherit;
+          font-size:11px; outline:none; transition:border-color 0.15s; width:100%;
+        }
+        .remark-edit-input::placeholder { color:var(--text5); }
         .remark-input {
           width:100%; background:var(--bg-chip); border:1px solid var(--border2);
           border-radius:8px; padding:10px 14px; color:var(--text); font-family:inherit;
@@ -1621,7 +1709,8 @@ export default function App() {
                           confirmId={confirmId} setConfirmId={setConfirmId} del={del}
                           editId={editId} setEditId={setEditId}
                           editText={editText} setEditText={setEditText} commitEdit={commitEdit}
-                          updateSubtasks={updateSubtasks}
+                          updateSubtasks={updateSubtasks} updateRemark={updateRemark}
+                          createFollowUp={createFollowUp} allTasks={tasks}
                           selectMode={selectMode} selected={selected} toggleSelect={toggleSelect} />
                       ))}
                     </div>
@@ -1633,7 +1722,8 @@ export default function App() {
                     confirmId={confirmId} setConfirmId={setConfirmId} del={del}
                     editId={editId} setEditId={setEditId}
                     editText={editText} setEditText={setEditText} commitEdit={commitEdit}
-                    updateSubtasks={updateSubtasks}
+                    updateSubtasks={updateSubtasks} updateRemark={updateRemark}
+                    createFollowUp={createFollowUp} allTasks={tasks}
                           selectMode={selectMode} selected={selected} toggleSelect={toggleSelect} />
                 ))
             }
@@ -1644,7 +1734,7 @@ export default function App() {
   );
 }
 
-function TaskCard({ task, i, readOnly, setStatus, setPrio, confirmId, setConfirmId, del, editId, setEditId, editText, setEditText, commitEdit, updateSubtasks, selectMode, selected, toggleSelect }) {
+function TaskCard({ task, i, readOnly, setStatus, setPrio, confirmId, setConfirmId, del, editId, setEditId, editText, setEditText, commitEdit, updateSubtasks, updateRemark, createFollowUp, allTasks, selectMode, selected, toggleSelect }) {
   const s         = STATUS_MAP[task.status];
   const p         = PRIORITY_MAP[task.priority || "medium"];
   const isEditing = editId === task.id;
@@ -1652,10 +1742,20 @@ function TaskCard({ task, i, readOnly, setStatus, setPrio, confirmId, setConfirm
   const subtasks  = task.subtasks || [];
   const doneCount = subtasks.filter(s => s.done).length;
 
-  const [showSubs, setShowSubs]       = useState(subtasks.length > 0);
-  const [subInput, setSubInput]       = useState("");
-  const [subEditId, setSubEditId]     = useState(null);
-  const [subEditText, setSubEditText] = useState("");
+  const [showSubs, setShowSubs]               = useState(subtasks.length > 0);
+  const [subInput, setSubInput]               = useState("");
+  const [subEditId, setSubEditId]             = useState(null);
+  const [subEditText, setSubEditText]         = useState("");
+  const [editingRemark, setEditingRemark]     = useState(false);
+  const [remarkDraft, setRemarkDraft]         = useState("");
+  const [showFollowUp, setShowFollowUp]       = useState(false);
+  const [followUpText, setFollowUpText]       = useState("");
+  const [followUpPrio, setFollowUpPrio]       = useState(task.priority || "medium");
+
+  // Find parent task if this is a follow-up
+  const parentTask = task.followUpOf ? allTasks?.find(t => t.id === task.followUpOf) : null;
+  // Count follow-up children
+  const followUpCount = allTasks?.filter(t => t.followUpOf === task.id).length || 0;
 
   const addSubtask = () => {
     const text = subInput.trim();
@@ -1739,6 +1839,9 @@ function TaskCard({ task, i, readOnly, setStatus, setPrio, confirmId, setConfirm
               className={`task-text ${task.status === "done" ? "done" : ""}`}
               onDoubleClick={() => { if (!readOnly) { setEditId(task.id); setEditText(task.text); } }}
             >
+              {task.followUpOf && parentTask && (
+                <span className="parent-link-badge" title={`Follow-up of: ${parentTask.text}`}>↳ </span>
+              )}
               {task.text}
             </span>
           </span>
@@ -1760,6 +1863,18 @@ function TaskCard({ task, i, readOnly, setStatus, setPrio, confirmId, setConfirm
           </div>
         ) : (
           <>
+            {followUpCount > 0 && (
+              <span className="followup-count-chip" title={`${followUpCount} follow-up task${followUpCount > 1 ? "s" : ""}`}>
+                ↳{followUpCount}
+              </span>
+            )}
+            {!readOnly && (
+              <button
+                className={`icon-btn sub-toggle-btn ${showFollowUp ? "active-followup" : ""}`}
+                title="Create follow-up task"
+                onClick={() => { setShowFollowUp(v => !v); setFollowUpText(""); }}
+              >↳</button>
+            )}
             {!readOnly && (
               <button className="icon-btn sub-toggle-btn" title="Subtasks" onClick={() => setShowSubs(v => !v)}>
                 {showSubs ? "⌃" : "⌄"}
@@ -1772,9 +1887,86 @@ function TaskCard({ task, i, readOnly, setStatus, setPrio, confirmId, setConfirm
       </div>
 
       {/* ── Remark ── */}
-      {task.remark && task.status === "done" && (
+      {task.status === "done" && (
         <div className="task-remark">
-          <span className="remark-icon">✎</span> {task.remark}
+          {editingRemark ? (
+            <div style={{ display:"flex", gap:6, alignItems:"center", padding:"0 2px" }}>
+              <input
+                className="remark-edit-input"
+                autoFocus
+                value={remarkDraft}
+                placeholder="Add a remark... (optional)"
+                onChange={e => setRemarkDraft(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === "Enter") {
+                    updateRemark(task.id, remarkDraft.trim() || null);
+                    setEditingRemark(false);
+                  }
+                  if (e.key === "Escape") setEditingRemark(false);
+                }}
+                onBlur={() => {
+                  updateRemark(task.id, remarkDraft.trim() || null);
+                  setEditingRemark(false);
+                }}
+              />
+            </div>
+          ) : (
+            <span
+              className="remark-text"
+              title={readOnly ? undefined : "Click to edit remark"}
+              onClick={() => { if (!readOnly) { setRemarkDraft(task.remark || ""); setEditingRemark(true); } }}
+            >
+              {task.remark
+                ? <><span className="remark-icon">✎</span> {task.remark}</>
+                : !readOnly && <span className="remark-add-hint">+ add remark</span>
+              }
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* ── Follow-up panel ── */}
+      {showFollowUp && !readOnly && (
+        <div className="followup-panel">
+          <div className="followup-header">
+            <span className="followup-header-icon">↳</span>
+            <span className="followup-header-label">New follow-up task</span>
+          </div>
+          <div className="followup-input-row">
+            <input
+              className="followup-input"
+              autoFocus
+              placeholder={`e.g. Follow up on "${task.text.slice(0, 30)}${task.text.length > 30 ? "…" : ""}"`}
+              value={followUpText}
+              onChange={e => setFollowUpText(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === "Enter" && followUpText.trim()) {
+                  createFollowUp(task.id, followUpText, followUpPrio);
+                  setShowFollowUp(false);
+                  setFollowUpText("");
+                }
+                if (e.key === "Escape") { setShowFollowUp(false); setFollowUpText(""); }
+              }}
+            />
+            <select
+              className="rec-prio-sel"
+              value={followUpPrio}
+              onChange={e => setFollowUpPrio(e.target.value)}
+              style={{ color: PRIORITY_MAP[followUpPrio]?.color }}
+            >
+              {PRIORITY.map(p => <option key={p.key} value={p.key} style={{ color:p.color }}>{p.label}</option>)}
+            </select>
+            <button
+              className="followup-add-btn"
+              disabled={!followUpText.trim()}
+              onClick={() => {
+                createFollowUp(task.id, followUpText, followUpPrio);
+                setShowFollowUp(false);
+                setFollowUpText("");
+              }}
+            >Add</button>
+            <button className="sub-action" style={{ color:"var(--text4)" }} onClick={() => { setShowFollowUp(false); setFollowUpText(""); }}>✕</button>
+          </div>
         </div>
       )}
 
