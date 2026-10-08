@@ -493,6 +493,17 @@ export default function App() {
     setRemarkText("");
   };
 
+  // ── TASK LINKING / SCROLL ──
+  const [highlightId, setHighlightId] = useState(null);
+  const scrollToTask = (id) => {
+    const el = document.querySelector(`[data-taskid="${id}"]`);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      setHighlightId(id);
+      setTimeout(() => setHighlightId(null), 1800);
+    }
+  };
+
   // ── FOLLOW-UP TASK ──
   const createFollowUp = async (parentId, text, prio) => {
     if (!text.trim()) return;
@@ -1205,15 +1216,68 @@ export default function App() {
         }
         .followup-add-btn:hover:not(:disabled) { background:rgba(110,168,254,0.2); }
         .followup-add-btn:disabled { opacity:0.35; cursor:not-allowed; }
-        .followup-count-chip {
-          font-size:10px; color:var(--accent); background:var(--accent-glow);
-          border:1px solid rgba(110,168,254,0.2); border-radius:20px;
-          padding:1px 7px; flex-shrink:0; font-weight:600; letter-spacing:0.03em;
-        }
         .parent-link-badge {
-          color:var(--accent); opacity:0.6; font-size:11px; font-style:normal;
+          background:none; border:none; cursor:pointer; padding:0 3px;
+          color:var(--accent); opacity:0.7; font-size:12px; font-style:normal;
+          border-radius:3px; transition:opacity 0.12s, background 0.12s; line-height:1; flex-shrink:0;
         }
+        .parent-link-badge:hover { opacity:1; background:var(--accent-glow); }
         .icon-btn.active-followup { color:var(--accent) !important; opacity:1 !important; }
+
+        /* ── LINKED TASKS PANEL ── */
+        .linked-panel {
+          border-top:1px solid var(--border);
+          padding:8px 14px 10px;
+          background:rgba(110,168,254,0.02);
+          display:flex; flex-direction:column; gap:3px;
+        }
+        .linked-header {
+          display:flex; align-items:center; gap:5px;
+          font-size:10px; color:var(--accent); text-transform:uppercase;
+          letter-spacing:0.08em; font-weight:600; margin-bottom:6px; opacity:0.8;
+        }
+        .linked-header-icon { font-size:12px; }
+        .linked-item {
+          display:flex; align-items:center; gap:8px;
+          padding:6px 8px; border-radius:7px;
+          background:none; border:1px solid transparent; cursor:pointer;
+          width:100%; text-align:left; font-family:inherit; transition:all 0.13s;
+        }
+        .linked-item:hover { background:var(--bg-chip); border-color:var(--border); }
+        .linked-prio-dot { width:6px; height:6px; border-radius:50%; flex-shrink:0; }
+        .linked-status-pill {
+          font-size:9px; font-weight:600; letter-spacing:0.06em; text-transform:uppercase;
+          border:1px solid; border-radius:20px; padding:2px 7px; white-space:nowrap;
+          flex-shrink:0;
+        }
+        .linked-text {
+          flex:1; font-size:12px; color:var(--text2); white-space:nowrap;
+          overflow:hidden; text-overflow:ellipsis; min-width:0;
+        }
+        .linked-text.done { text-decoration:line-through; color:var(--text5); }
+        .linked-jump { font-size:11px; color:var(--text5); flex-shrink:0; transition:color 0.12s; }
+        .linked-item:hover .linked-jump { color:var(--accent); }
+
+        /* ── HIGHLIGHT FLASH ── */
+        @keyframes highlightFlash {
+          0%   { box-shadow:0 0 0 0 var(--accent-glow), 0 0 18px 4px var(--accent-glow); border-color:var(--accent); }
+          60%  { box-shadow:0 0 0 4px var(--accent-glow); border-color:var(--accent); }
+          100% { box-shadow:none; border-color:var(--border); }
+        }
+        .task-card.task-highlight {
+          animation:highlightFlash 1.8s ease forwards !important;
+        }
+
+        /* followup-count-chip as button */
+        .followup-count-chip {
+          background:none; border:1px solid rgba(110,168,254,0.2); cursor:pointer;
+          border-radius:20px; padding:1px 7px; color:var(--accent);
+          font-family:inherit; font-size:10px; font-weight:600; letter-spacing:0.03em;
+          flex-shrink:0; transition:all 0.13s; line-height:1.6;
+        }
+        .followup-count-chip:hover, .followup-count-chip.active {
+          background:var(--accent-glow); border-color:rgba(110,168,254,0.4);
+        }
 
         /* ── BULK SELECT ── */
         .bulk-bar {
@@ -1711,6 +1775,7 @@ export default function App() {
                           editText={editText} setEditText={setEditText} commitEdit={commitEdit}
                           updateSubtasks={updateSubtasks} updateRemark={updateRemark}
                           createFollowUp={createFollowUp} allTasks={tasks}
+                          scrollToTask={scrollToTask} highlightId={highlightId}
                           selectMode={selectMode} selected={selected} toggleSelect={toggleSelect} />
                       ))}
                     </div>
@@ -1724,6 +1789,7 @@ export default function App() {
                     editText={editText} setEditText={setEditText} commitEdit={commitEdit}
                     updateSubtasks={updateSubtasks} updateRemark={updateRemark}
                     createFollowUp={createFollowUp} allTasks={tasks}
+                    scrollToTask={scrollToTask} highlightId={highlightId}
                           selectMode={selectMode} selected={selected} toggleSelect={toggleSelect} />
                 ))
             }
@@ -1734,7 +1800,7 @@ export default function App() {
   );
 }
 
-function TaskCard({ task, i, readOnly, setStatus, setPrio, confirmId, setConfirmId, del, editId, setEditId, editText, setEditText, commitEdit, updateSubtasks, updateRemark, createFollowUp, allTasks, selectMode, selected, toggleSelect }) {
+function TaskCard({ task, i, readOnly, setStatus, setPrio, confirmId, setConfirmId, del, editId, setEditId, editText, setEditText, commitEdit, updateSubtasks, updateRemark, createFollowUp, allTasks, scrollToTask, highlightId, selectMode, selected, toggleSelect }) {
   const s         = STATUS_MAP[task.status];
   const p         = PRIORITY_MAP[task.priority || "medium"];
   const isEditing = editId === task.id;
@@ -1751,11 +1817,13 @@ function TaskCard({ task, i, readOnly, setStatus, setPrio, confirmId, setConfirm
   const [showFollowUp, setShowFollowUp]       = useState(false);
   const [followUpText, setFollowUpText]       = useState("");
   const [followUpPrio, setFollowUpPrio]       = useState(task.priority || "medium");
+  const [showLinked, setShowLinked]           = useState(false);
 
   // Find parent task if this is a follow-up
-  const parentTask = task.followUpOf ? allTasks?.find(t => t.id === task.followUpOf) : null;
-  // Count follow-up children
-  const followUpCount = allTasks?.filter(t => t.followUpOf === task.id).length || 0;
+  const parentTask  = task.followUpOf ? allTasks?.find(t => t.id === task.followUpOf) : null;
+  // Find all child follow-up tasks
+  const childTasks  = allTasks?.filter(t => t.followUpOf === task.id) || [];
+  const isHighlight = highlightId === task.id;
 
   const addSubtask = () => {
     const text = subInput.trim();
@@ -1788,7 +1856,8 @@ function TaskCard({ task, i, readOnly, setStatus, setPrio, confirmId, setConfirm
 
   return (
     <div
-      className={`task-card ${task.status === "done" ? "is-done" : ""} ${isConfirm ? "confirming" : ""} ${task.rolledFrom ? "rolled" : ""}`}
+      data-taskid={task.id}
+      className={`task-card ${task.status === "done" ? "is-done" : ""} ${isConfirm ? "confirming" : ""} ${task.rolledFrom ? "rolled" : ""} ${isHighlight ? "task-highlight" : ""}`}
       style={{ animationDelay:`${i * 0.03}s` }}
     >
       {/* ── Main row ── */}
@@ -1840,7 +1909,11 @@ function TaskCard({ task, i, readOnly, setStatus, setPrio, confirmId, setConfirm
               onDoubleClick={() => { if (!readOnly) { setEditId(task.id); setEditText(task.text); } }}
             >
               {task.followUpOf && parentTask && (
-                <span className="parent-link-badge" title={`Follow-up of: ${parentTask.text}`}>↳ </span>
+                <button
+                  className="parent-link-badge"
+                  title={`Follow-up of: ${parentTask.text} — click to jump`}
+                  onClick={e => { e.stopPropagation(); scrollToTask(parentTask.id); }}
+                >↳</button>
               )}
               {task.text}
             </span>
@@ -1863,10 +1936,14 @@ function TaskCard({ task, i, readOnly, setStatus, setPrio, confirmId, setConfirm
           </div>
         ) : (
           <>
-            {followUpCount > 0 && (
-              <span className="followup-count-chip" title={`${followUpCount} follow-up task${followUpCount > 1 ? "s" : ""}`}>
-                ↳{followUpCount}
-              </span>
+            {childTasks.length > 0 && (
+              <button
+                className={`followup-count-chip ${showLinked ? "active" : ""}`}
+                title={`${childTasks.length} follow-up task${childTasks.length > 1 ? "s" : ""} — click to view`}
+                onClick={() => setShowLinked(v => !v)}
+              >
+                ↳{childTasks.length}
+              </button>
             )}
             {!readOnly && (
               <button
@@ -1922,6 +1999,35 @@ function TaskCard({ task, i, readOnly, setStatus, setPrio, confirmId, setConfirm
               }
             </span>
           )}
+        </div>
+      )}
+
+      {/* ── Linked tasks (child follow-ups list) ── */}
+      {showLinked && childTasks.length > 0 && (
+        <div className="linked-panel">
+          <div className="linked-header">
+            <span className="linked-header-icon">↳</span>
+            <span>Follow-up tasks</span>
+          </div>
+          {childTasks.map(child => {
+            const cs = STATUS_MAP[child.status];
+            const cp = PRIORITY_MAP[child.priority || "medium"];
+            return (
+              <button
+                key={child.id}
+                className="linked-item"
+                onClick={() => scrollToTask(child.id)}
+                title="Jump to this task"
+              >
+                <span className="linked-prio-dot" style={{ background: cp.color }} />
+                <span className="linked-status-pill" style={{ color: cs.color, borderColor: cs.border, background: cs.bg }}>
+                  {cs.label}
+                </span>
+                <span className={`linked-text ${child.status === "done" ? "done" : ""}`}>{child.text}</span>
+                <span className="linked-jump">→</span>
+              </button>
+            );
+          })}
         </div>
       )}
 
