@@ -136,6 +136,19 @@ async function fetchAllDateKeys(userId) {
   return unique;
 }
 
+async function searchAllTasks(query, userId) {
+  const { data, error } = await sb
+    .from("tasks")
+    .select("*")
+    .eq("user_id", userId)
+    .ilike("text", `%${query}%`)
+    .order("date_key", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(200);
+  if (error) throw error;
+  return (data || []).map(r => ({ ...dbToTask(r), dateKey: r.date_key }));
+}
+
 async function upsertTask(task, dateKey, userId) {
   const { error } = await sb.from("tasks").upsert(taskToDb(task, dateKey, userId));
   if (error) throw error;
@@ -241,6 +254,12 @@ export default function App() {
   // Bulk select
   const [selectMode, setSelectMode]   = useState(false);
   const [selected, setSelected]       = useState(new Set());
+  // Global all-tasks search view
+  const [globalView, setGlobalView]       = useState(false);
+  const [globalQuery, setGlobalQuery]     = useState("");
+  const [globalResults, setGlobalResults] = useState([]);
+  const [globalLoading, setGlobalLoading] = useState(false);
+  const globalInputRef = useRef();
   const inputRef = useRef();
 
   // Load tasks when date changes
@@ -289,6 +308,46 @@ export default function App() {
   }, [userId]);
 
   useEffect(() => { refreshRecurring(); }, [refreshRecurring]);
+
+  // ── GLOBAL SEARCH ──
+  useEffect(() => {
+    if (!globalView) return;
+    if (!globalQuery.trim()) { setGlobalResults([]); return; }
+    const t = setTimeout(() => {
+      setGlobalLoading(true);
+      searchAllTasks(globalQuery.trim(), userId)
+        .then(r => { setGlobalResults(r); setGlobalLoading(false); })
+        .catch(e => { setError(e.message); setGlobalLoading(false); });
+    }, 280);
+    return () => clearTimeout(t);
+  }, [globalQuery, globalView, userId]);
+
+  const openGlobalView = () => {
+    setGlobalView(true);
+    setSidebarOpen(false);
+    setTimeout(() => globalInputRef.current?.focus(), 50);
+  };
+
+  useEffect(() => {
+    const handler = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        openGlobalView();
+      }
+      if (e.key === "Escape" && globalView) {
+        setGlobalView(false);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [globalView]);
+
+  const navigateToTask = (task) => {
+    setGlobalView(false);
+    setDateKey(task.dateKey);
+    // highlight after the day loads
+    setTimeout(() => scrollToTask(task.id), 400);
+  };
 
   // ── AUTO ROLLOVER ON OPEN ──
   // Runs once on mount (and whenever userId changes).
@@ -1365,6 +1424,97 @@ export default function App() {
         @media (max-width: 768px) {
           .bulk-bar { padding:8px 14px; }
         }
+
+        /* ── GLOBAL SEARCH SIDEBAR BUTTON ── */
+        .global-search-btn {
+          display:flex; align-items:center; gap:8px; width:100%;
+          background:var(--bg-chip); border:1px solid var(--border);
+          border-radius:10px; padding:9px 12px; cursor:pointer;
+          color:var(--text2); font-size:13px; font-weight:500;
+          transition:all 0.15s; margin-top:4px;
+        }
+        .global-search-btn:hover { background:var(--bg-chip2); border-color:var(--border2); color:var(--text); }
+        .global-search-btn.active { background:rgba(110,168,254,0.10); border-color:var(--accent); color:var(--accent); }
+        .global-search-icon { font-size:15px; opacity:0.7; }
+        .global-search-kbd {
+          margin-left:auto; font-size:10px; background:var(--bg-card);
+          border:1px solid var(--border2); border-radius:5px;
+          padding:1px 5px; color:var(--text3); letter-spacing:0.5px;
+        }
+
+        /* ── GLOBAL SEARCH PANEL (main area) ── */
+        .global-search-panel {
+          display:flex; flex-direction:column; height:100%;
+          animation:fadeIn 0.18s ease;
+        }
+        .global-search-header {
+          display:flex; align-items:center; justify-content:space-between;
+          padding:0 0 16px 0; border-bottom:1px solid var(--border);
+          margin-bottom:16px;
+        }
+        .global-search-title {
+          display:flex; align-items:center; gap:8px;
+          font-size:18px; font-weight:700; color:var(--text);
+        }
+        .global-search-title-icon { font-size:20px; color:var(--accent); opacity:0.8; }
+        .global-search-close {
+          background:none; border:1px solid var(--border); border-radius:8px;
+          color:var(--text3); cursor:pointer; padding:4px 8px; font-size:14px;
+          transition:all 0.15s;
+        }
+        .global-search-close:hover { background:var(--bg-chip); color:var(--text); border-color:var(--border2); }
+        .global-search-bar {
+          display:flex; align-items:center; gap:10px;
+          background:var(--bg-chip); border:1.5px solid var(--border2);
+          border-radius:12px; padding:0 14px; transition:border-color 0.15s;
+          margin-bottom:16px;
+        }
+        .global-search-bar:focus-within { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-glow); }
+        .global-search-bar-icon { font-size:18px; color:var(--text3); flex-shrink:0; }
+        .global-search-input {
+          flex:1; background:none; border:none; outline:none;
+          color:var(--text); font-size:15px; padding:12px 0;
+        }
+        .global-search-input::placeholder { color:var(--text4); }
+        .global-search-clear {
+          background:none; border:none; color:var(--text3); cursor:pointer;
+          font-size:14px; padding:4px; border-radius:6px; flex-shrink:0;
+        }
+        .global-search-clear:hover { color:var(--text); background:var(--bg-card-hover); }
+        .global-results-area { flex:1; overflow-y:auto; }
+        .global-search-hint {
+          display:flex; flex-direction:column; align-items:center;
+          justify-content:center; padding:60px 0; color:var(--text2); text-align:center;
+        }
+        .global-results-count {
+          font-size:12px; color:var(--text3); margin-bottom:12px; padding:0 2px;
+        }
+        .global-date-group { margin-bottom:20px; }
+        .global-date-label {
+          font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.8px;
+          color:var(--text4); padding:4px 2px 8px; border-bottom:1px solid var(--border);
+          margin-bottom:6px;
+        }
+        .global-result-item {
+          display:flex; align-items:center; gap:8px; width:100%;
+          background:var(--bg-card); border:1px solid var(--border);
+          border-radius:9px; padding:9px 12px; margin-bottom:5px;
+          cursor:pointer; text-align:left; transition:all 0.12s;
+        }
+        .global-result-item:hover { background:var(--bg-card-hover); border-color:var(--border2); transform:translateX(2px); }
+        .global-result-item:hover .global-result-jump { color:var(--accent); opacity:1; }
+        .global-result-prio {
+          width:8px; height:8px; border-radius:50%; flex-shrink:0;
+        }
+        .global-result-status {
+          font-size:10px; font-weight:600; border:1px solid; border-radius:5px;
+          padding:1px 6px; flex-shrink:0; white-space:nowrap;
+        }
+        .global-result-text {
+          flex:1; font-size:13px; color:var(--text); min-width:0;
+          overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+        }
+        .global-result-jump { color:var(--text4); font-size:14px; opacity:0.5; flex-shrink:0; transition:all 0.12s; }
       `}</style>
 
       {/* ── END DAY MODAL ── */}
@@ -1503,6 +1653,13 @@ export default function App() {
           {migrateResult && migrateResult.count === 0 && (
             <div className="migrate-success" style={{ color:"#475569" }}>No local tasks found to import.</div>
           )}
+
+          {/* All Tasks search */}
+          <button className={`global-search-btn ${globalView ? "active" : ""}`} onClick={openGlobalView}>
+            <span className="global-search-icon">⌕</span>
+            <span>Search All Tasks</span>
+            <span className="global-search-kbd">⌘K</span>
+          </button>
 
           <div className="progress-section">
             <div className="progress-label">
@@ -1713,6 +1870,86 @@ export default function App() {
             </div>
           )}
 
+          {globalView ? (
+            <div className="global-search-panel">
+              <div className="global-search-header">
+                <div className="global-search-title">
+                  <span className="global-search-title-icon">⌕</span>
+                  Search All Tasks
+                </div>
+                <button className="global-search-close" onClick={() => setGlobalView(false)} title="Close (Esc)">✕</button>
+              </div>
+              <div className="global-search-bar">
+                <span className="global-search-bar-icon">⌕</span>
+                <input
+                  ref={globalInputRef}
+                  className="global-search-input"
+                  placeholder="Search tasks across all days…"
+                  value={globalQuery}
+                  onChange={e => setGlobalQuery(e.target.value)}
+                  onKeyDown={e => e.key === "Escape" && setGlobalView(false)}
+                  autoFocus
+                />
+                {globalQuery && (
+                  <button className="global-search-clear" onClick={() => setGlobalQuery("")}>✕</button>
+                )}
+              </div>
+              <div className="global-results-area">
+                {globalLoading ? (
+                  <div className="loading-state">
+                    <div className="loading-spin" />
+                    <div>Searching…</div>
+                  </div>
+                ) : !globalQuery.trim() ? (
+                  <div className="global-search-hint">
+                    <span style={{ fontSize:32, opacity:0.25 }}>⌕</span>
+                    <div style={{ marginTop:8, opacity:0.5 }}>Type to search across all your tasks</div>
+                    <div style={{ marginTop:4, opacity:0.35, fontSize:12 }}>Tip: press Esc to go back, ⌘K to reopen</div>
+                  </div>
+                ) : globalResults.length === 0 ? (
+                  <div className="empty-state">
+                    <span className="empty-icon">✦</span>
+                    No tasks found for "{globalQuery}"
+                  </div>
+                ) : (() => {
+                  // Group by dateKey
+                  const byDate = {};
+                  globalResults.forEach(t => {
+                    if (!byDate[t.dateKey]) byDate[t.dateKey] = [];
+                    byDate[t.dateKey].push(t);
+                  });
+                  const sortedDates = Object.keys(byDate).sort((a, b) => b.localeCompare(a));
+                  return (
+                    <div>
+                      <div className="global-results-count">{globalResults.length} result{globalResults.length !== 1 ? "s" : ""} found</div>
+                      {sortedDates.map(dk => {
+                        const d = new Date(dk + "T00:00:00");
+                        const label = d.toLocaleDateString("en-US", { weekday:"short", year:"numeric", month:"short", day:"numeric" });
+                        return (
+                          <div key={dk} className="global-date-group">
+                            <div className="global-date-label">{label}</div>
+                            {byDate[dk].map(t => {
+                              const s = STATUS_MAP[t.status];
+                              const p = PRIORITY_MAP[t.priority || "medium"];
+                              return (
+                                <button key={t.id} className="global-result-item" onClick={() => navigateToTask(t)}>
+                                  <span className="global-result-prio" style={{ background: p.color }} title={p.label + " priority"} />
+                                  <span className="global-result-status" style={{ color: s.color, borderColor: s.border, background: s.bg }}>{s.label}</span>
+                                  <span className="global-result-text">{t.text}</span>
+                                  <span className="global-result-jump">→</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+          ) : (
+          <>
           {isReadOnly && (
             <div className="readonly-banner">
               ⚠ Past day — view only. Navigate to today to add tasks.
@@ -1794,6 +2031,8 @@ export default function App() {
                 ))
             }
           </div>
+          </>
+          )}
         </main>
       </div>
     </div>
