@@ -232,7 +232,6 @@ export default function App() {
   const [historyKeys, setHistoryKeys] = useState([]);
   const [error, setError]             = useState(null);
   // Change user ID modal
-  const [showChangeId, setShowChangeId] = useState(false);
   const [sidebarOpen, setSidebarOpen]   = useState(false);
   const [idInput, setIdInput]           = useState("");
   const [idError, setIdError]           = useState("");
@@ -254,6 +253,9 @@ export default function App() {
   // Bulk select
   const [selectMode, setSelectMode]   = useState(false);
   const [selected, setSelected]       = useState(new Set());
+  // Settings view
+  const [settingsView, setSettingsView]   = useState(false);
+  const [showChangeId, setShowChangeId]   = useState(false);
   // Global all-tasks search view
   const [globalView, setGlobalView]       = useState(false);
   const [globalQuery, setGlobalQuery]     = useState("");
@@ -324,8 +326,15 @@ export default function App() {
 
   const openGlobalView = () => {
     setGlobalView(true);
+    setSettingsView(false);
     setSidebarOpen(false);
     setTimeout(() => globalInputRef.current?.focus(), 50);
+  };
+
+  const openSettings = () => {
+    setSettingsView(true);
+    setGlobalView(false);
+    setSidebarOpen(false);
   };
 
   useEffect(() => {
@@ -334,13 +343,14 @@ export default function App() {
         e.preventDefault();
         openGlobalView();
       }
-      if (e.key === "Escape" && globalView) {
+      if (e.key === "Escape" && (globalView || settingsView)) {
         setGlobalView(false);
+        setSettingsView(false);
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [globalView]);
+  }, [globalView, settingsView]);
 
   const navigateToTask = (task) => {
     setGlobalView(false);
@@ -658,7 +668,6 @@ export default function App() {
     if (newId === userId) { setIdError("That's already your current ID."); return; }
     localStorage.setItem(USER_ID_KEY, newId);
     setUserId(newId);
-    setShowChangeId(false);
     setIdInput("");
     setIdError("");
     setMigrateResult(null);
@@ -1446,6 +1455,7 @@ export default function App() {
         .global-search-panel {
           display:flex; flex-direction:column; height:100%;
           animation:fadeIn 0.18s ease;
+          padding: 20px 36px 0;
         }
         .global-search-header {
           display:flex; align-items:center; justify-content:space-between;
@@ -1515,6 +1525,52 @@ export default function App() {
           overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
         }
         .global-result-jump { color:var(--text4); font-size:14px; opacity:0.5; flex-shrink:0; transition:all 0.12s; }
+
+        /* ── SETTINGS PANEL ── */
+        .settings-panel {
+          display:flex; flex-direction:column; height:100%;
+          animation:fadeIn 0.18s ease;
+        }
+        .settings-header {
+          display:flex; align-items:center; justify-content:space-between;
+          padding:20px 36px 16px; border-bottom:1px solid var(--border);
+          flex-shrink:0;
+        }
+        .settings-title {
+          display:flex; align-items:center; gap:8px;
+          font-size:18px; font-weight:700; color:var(--text);
+        }
+        .settings-body {
+          flex:1; overflow-y:auto; padding:20px 36px 36px;
+          display:flex; flex-direction:column; gap:16px;
+        }
+        .settings-section-title {
+          font-size:11px; font-weight:700; text-transform:uppercase;
+          letter-spacing:0.08em; color:var(--text4); margin-top:4px;
+        }
+        .settings-card {
+          background:var(--bg-card); border:1px solid var(--border);
+          border-radius:12px; padding:16px 18px;
+        }
+        .settings-row {
+          display:flex; align-items:center; justify-content:space-between; gap:16px;
+        }
+        .settings-row-label {
+          font-size:13px; font-weight:600; color:var(--text); margin-bottom:2px;
+        }
+        .settings-row-sub {
+          font-size:11px; color:var(--text4); line-height:1.5;
+        }
+        .settings-toggle {
+          flex-shrink:0; padding:5px 14px; border-radius:20px; font-family:inherit;
+          font-size:12px; font-weight:600; cursor:pointer; transition:all 0.15s;
+          border:1px solid var(--border2);
+        }
+        .settings-toggle.on  { background:rgba(110,168,254,0.12); border-color:rgba(110,168,254,0.35); color:var(--accent); }
+        .settings-toggle.off { background:var(--bg-chip); color:var(--text3); }
+
+        /* topbar sort button active state */
+        .nav-btn.sort-active-btn { color:#fbbf24; border-color:rgba(251,191,36,0.35); background:rgba(251,191,36,0.06); }
       `}</style>
 
       {/* ── END DAY MODAL ── */}
@@ -1543,38 +1599,6 @@ export default function App() {
                 Cancel
               </button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── CHANGE USER ID MODAL ── */}
-      {showChangeId && (
-        <div className="modal-backdrop" onClick={() => setShowChangeId(false)}>
-          <div className="modal" onClick={e => e.stopPropagation()}>
-            <div className="modal-title">Your User ID</div>
-            <div className="modal-sub">
-              Your ID links you to your data in Supabase. Copy it somewhere safe — if you switch browsers or devices, enter it here to recover all your tasks.
-            </div>
-            <div className="id-display">
-              <code className="id-code">{userId}</code>
-              <button className="copy-btn" onClick={() => navigator.clipboard?.writeText(userId)}>Copy</button>
-            </div>
-            <div style={{ borderTop:"1px solid var(--border2)", margin:"20px 0" }} />
-            <div style={{ fontSize:13, color:"#64748b", marginBottom:12 }}>Enter a different ID to switch accounts:</div>
-            <div style={{ display:"flex", gap:8, marginBottom:8 }}>
-              <input
-                className="id-input"
-                placeholder="usr_xxxxxxxx"
-                value={idInput}
-                onChange={e => { setIdInput(e.target.value); setIdError(""); }}
-                onKeyDown={e => e.key === "Enter" && applyChangeId()}
-              />
-              <button className="modal-confirm" style={{ flex:"none", padding:"10px 16px", fontSize:13 }} onClick={applyChangeId}>
-                Switch
-              </button>
-            </div>
-            {idError && <div style={{ fontSize:12, color:"#f87171", marginBottom:8 }}>{idError}</div>}
-            <button className="modal-cancel" style={{ width:"100%", marginTop:4 }} onClick={() => setShowChangeId(false)}>Close</button>
           </div>
         </div>
       )}
@@ -1687,21 +1711,6 @@ export default function App() {
             ))}
           </div>
 
-          <div className="section-label">Sort</div>
-          <button className={`sort-toggle ${sortByPriority ? "active" : ""}`} onClick={() => setSort(v => !v)}>
-            <span>⇅</span> Sort by Priority
-            {sortByPriority && <span style={{ marginLeft:"auto", fontSize:10, color:"#fbbf24" }}>✓</span>}
-          </button>
-
-          {isToday && (
-            <>
-              <div className="section-label">Day Actions</div>
-              <button className="end-day-btn" disabled={saving} onClick={() => setShowEndDay(true)}>
-                ✦ End My Day
-              </button>
-            </>
-          )}
-
           {sidebarHistoryKeys.length > 0 && (
             <>
               <div className="section-label" style={{ marginTop:8 }}>History</div>
@@ -1726,90 +1735,14 @@ export default function App() {
             </>
           )}
 
-          {/* ── RECURRING TASKS ── */}
-          <div className="section-label" style={{ marginTop:8 }}>Recurring Tasks</div>
-          <button className="history-toggle" onClick={() => setShowRecurring(v => !v)}>
-            {showRecurring ? "▾" : "▸"} Daily Templates ({recurring.length})
-          </button>
-          {showRecurring && (
-            <div className="recurring-panel">
-              {recurring.map(r => (
-                <div key={r.id} className="rec-item">
-                  {/* enabled toggle */}
-                  <button
-                    className={`rec-toggle ${r.enabled !== false ? "on" : "off"}`}
-                    title={r.enabled !== false ? "Enabled" : "Disabled"}
-                    onClick={() => {
-                      const updated = { ...r, enabled: r.enabled === false ? true : false };
-                      setRecurring(p => p.map(x => x.id === r.id ? updated : x));
-                      upsertRecurring(updated, userId).catch(e => setError(e.message));
-                    }}
-                  >{r.enabled !== false ? "●" : "○"}</button>
-
-                  {recEditId === r.id ? (
-                    <div className="rec-edit-block">
-                      <div style={{ display:"flex", gap:6, alignItems:"center" }}>
-                        <input
-                          className="rec-edit-input"
-                          value={recEditText}
-                          onChange={e => setRecEditText(e.target.value)}
-                          onKeyDown={e => { if (e.key === "Enter") saveRecurringEdit(r.id); if (e.key === "Escape") setRecEditId(null); }}
-                          autoFocus
-                        />
-                        <select className="rec-prio-sel" value={recEditPrio} onChange={e => setRecEditPrio(e.target.value)}>
-                          {PRIORITY.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
-                        </select>
-                        <button className="rec-action-btn save" onClick={() => saveRecurringEdit(r.id)}>✓</button>
-                        <button className="rec-action-btn cancel" onClick={() => setRecEditId(null)}>✕</button>
-                      </div>
-                      <div className="rec-day-picker">
-                        {['S','M','T','W','T','F','S'].map((d, i) => (
-                          <button
-                            key={i}
-                            className={`rec-day-btn ${(recEditDays || r.days || [0,1,2,3,4,5,6]).includes(i) ? "active" : ""}`}
-                            onClick={() => {
-                              const cur = recEditDays || r.days || [0,1,2,3,4,5,6];
-                              setRecEditDays(cur.includes(i) ? cur.filter(x => x !== i) : [...cur, i].sort());
-                            }}
-                          >{d}</button>
-                        ))}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="rec-view-block">
-                      <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                        <span className="rec-dot" style={{ background: PRIORITY_MAP[r.priority]?.color || "#64748b" }} />
-                        <span className={`rec-text ${r.enabled === false ? "rec-disabled" : ""}`}>{r.text}</span>
-                        <button className="rec-action-btn edit" onClick={() => { setRecEditId(r.id); setRecEditText(r.text); setRecEditPrio(r.priority); setRecEditDays(r.days || [0,1,2,3,4,5,6]); }}>✎</button>
-                        <button className="rec-action-btn del" onClick={() => removeRecurring(r.id)}>✕</button>
-                      </div>
-                      <div className="rec-days-display">
-                        {['S','M','T','W','T','F','S'].map((d, i) => (
-                          <span key={i} className={`rec-day-dot ${(r.days || [0,1,2,3,4,5,6]).includes(i) ? "active" : ""}`}>{d}</span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))}
-              <div className="rec-add-row">
-                <input
-                  className="rec-add-input"
-                  placeholder="New daily task..."
-                  value={recInput}
-                  onChange={e => setRecInput(e.target.value)}
-                  onKeyDown={e => e.key === "Enter" && addRecurring()}
-                />
-                <select className="rec-prio-sel" value={recPriority} onChange={e => setRecPriority(e.target.value)}>
-                  {PRIORITY.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
-                </select>
-                <button className="rec-action-btn save" onClick={addRecurring}>+</button>
-              </div>
+          <div className="sidebar-bottom">
+            <button className={`sidebar-nav-btn ${settingsView ? "active" : ""}`} onClick={openSettings}>
+              <span>⚙</span>
+              <span>Settings</span>
+            </button>
+            <div className="sidebar-footer">
+              {loading ? "Loading..." : tasks.length === 0 ? "No tasks yet" : `${counts.done} / ${tasks.length} done`}
             </div>
-          )}
-
-          <div className="sidebar-footer">
-            {loading ? "Loading..." : tasks.length === 0 ? "Add your first task →" : `${counts.done} of ${tasks.length} complete`}
           </div>
         </aside>
 
