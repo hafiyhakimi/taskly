@@ -790,74 +790,94 @@ export default function App() {
 
         /* ── SIDEBAR ── */
         .sidebar {
-          width:256px; min-width:256px; background:var(--bg-sidebar);
+          width:248px; min-width:248px; background:var(--bg-sidebar);
           border-right:1px solid var(--border); display:flex; flex-direction:column;
-          padding:28px 20px 20px; overflow-y:auto;
-          animation:fadeSlide 0.4s ease both;
+          padding:24px 16px 16px; overflow-y:auto;
+          animation:fadeSlide 0.35s ease both;
           background-image:var(--sidebar-glow);
         }
         @keyframes fadeSlide { from { opacity:0; transform:translateX(-12px); } to { opacity:1; transform:translateX(0); } }
 
-        .brand { margin-bottom:24px; padding-bottom:20px; border-bottom:1px solid var(--border); }
-        .brand-name { font-family:'Fraunces',Georgia,serif; font-size:24px; font-weight:700; color:var(--text-title); letter-spacing:-0.8px; line-height:1; background:linear-gradient(135deg, #a5b4fc, #6ea8fe); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; }
-        .brand-sub  { font-size:10px; color:var(--text4); letter-spacing:0.1em; text-transform:uppercase; margin-top:6px; }
+        .brand { margin-bottom:20px; padding-bottom:16px; border-bottom:1px solid var(--border); }
+        .brand-name { font-family:'Fraunces',Georgia,serif; font-size:22px; font-weight:700; letter-spacing:-0.5px; line-height:1; background:linear-gradient(135deg, #a5b4fc, #6ea8fe); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-clip:text; }
+        .brand-sub  { font-size:11px; color:var(--text4); margin-top:4px; font-weight:400; }
 
-        .user-chip { display:flex; align-items:center; gap:6px; background:var(--bg-chip); border-radius:8px; padding:7px 10px; margin-bottom:20px; border:1px solid var(--border); }
-        .user-dot  { width:7px; height:7px; border-radius:50%; background:#4ade80; flex-shrink:0; box-shadow:0 0 6px rgba(74,222,128,0.5); }
-        .user-id   { font-size:10px; color:var(--text3); letter-spacing:0.04em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
+        /* user chip — slim, readable */
+        .user-chip { display:flex; align-items:center; gap:8px; padding:6px 10px; margin-bottom:16px; border-radius:8px; background:var(--bg-chip); border:1px solid var(--border); }
+        .user-dot  { width:6px; height:6px; border-radius:50%; background:#4ade80; flex-shrink:0; box-shadow:0 0 5px rgba(74,222,128,0.5); }
+        .user-id   { font-size:11px; color:var(--text3); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
 
-        .progress-section { margin-bottom:20px; }
-        .progress-label { display:flex; justify-content:space-between; font-size:11px; color:var(--text3); text-transform:uppercase; letter-spacing:0.07em; margin-bottom:8px; font-weight:600; }
-        .progress-track { height:6px; background:var(--border2); border-radius:10px; overflow:hidden; }
-        .progress-fill  { height:100%; background:linear-gradient(90deg,#6ea8fe,#4ade80); border-radius:10px; transition:width 0.5s cubic-bezier(.4,0,.2,1); box-shadow:0 0 8px rgba(110,168,254,0.4); }
+        /* progress */
+        .progress-section { margin-bottom:18px; }
+        .progress-label { display:flex; justify-content:space-between; align-items:baseline; font-size:12px; color:var(--text3); margin-bottom:7px; font-weight:500; }
+        .progress-label-pct { font-size:13px; font-weight:600; color:var(--accent); }
+        .progress-track { height:5px; background:var(--border2); border-radius:10px; overflow:hidden; }
+        .progress-fill  { height:100%; background:linear-gradient(90deg, var(--accent), #4ade80); border-radius:10px; transition:width 0.5s cubic-bezier(.4,0,.2,1); }
 
-        .section-label { font-size:10px; color:var(--text4); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:6px; padding-left:4px; margin-top:4px; font-weight:600; }
+        /* section divider label — quieter, no shouting */
+        .section-label {
+          font-size:11px; color:var(--text4); font-weight:500;
+          margin:14px 0 6px 2px; letter-spacing:0.02em;
+        }
 
-        .filter-list { display:flex; flex-direction:column; gap:2px; margin-bottom:16px; }
+        .filter-list { display:flex; flex-direction:column; gap:1px; margin-bottom:12px; }
         .filter-item {
-          display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:7px;
-          font-size:13px; color:var(--text2); cursor:pointer; border:none; background:none;
-          text-align:left; transition:all 0.15s; width:100%; font-family:inherit;
+          display:flex; align-items:center; gap:9px; padding:7px 10px; border-radius:7px;
+          font-size:13px; color:var(--text3); cursor:pointer; border:none; background:none;
+          text-align:left; transition:background 0.12s, color 0.12s; width:100%; font-family:inherit;
         }
         .filter-item:hover  { color:var(--text); background:var(--bg-chip); }
-        .filter-item.active { color:var(--text); background:var(--accent-glow); border-left:2px solid var(--accent); }
-        .filter-dot   { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
-        .filter-count { margin-left:auto; font-size:11px; background:var(--bg-chip2); padding:1px 7px; border-radius:20px; color:var(--text3); }
+        .filter-item.active { color:var(--text); background:var(--accent-glow); border-left:2px solid var(--accent); padding-left:8px; }
+        .filter-dot   { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
+        .filter-count { margin-left:auto; font-size:11px; color:var(--text4); min-width:18px; text-align:right; }
 
         .sort-toggle {
-          display:flex; align-items:center; gap:8px; padding:8px 10px; border-radius:7px;
-          font-size:13px; color:var(--text2); cursor:pointer; border:1px solid transparent; background:none;
-          text-align:left; transition:all 0.15s; width:100%; font-family:inherit; margin-bottom:16px;
+          display:flex; align-items:center; gap:8px; padding:7px 10px; border-radius:7px;
+          font-size:13px; color:var(--text3); cursor:pointer; border:1px solid transparent; background:none;
+          text-align:left; transition:all 0.12s; width:100%; font-family:inherit; margin-bottom:12px;
         }
         .sort-toggle:hover  { color:var(--text); background:var(--bg-chip); }
-        .sort-toggle.active { color:#fbbf24; background:var(--bg-chip); border-color:#2a2010; }
+        .sort-toggle.active { color:#fbbf24; background:rgba(251,191,36,0.06); border-color:rgba(251,191,36,0.2); }
 
         .end-day-btn {
-          display:flex; align-items:center; gap:8px; padding:10px 14px; border-radius:8px;
-          font-size:13px; font-weight:600; cursor:pointer; border:1px solid rgba(251,191,36,0.25);
-          background:rgba(251,191,36,0.06); color:#fbbf24; font-family:inherit;
+          display:flex; align-items:center; gap:8px; padding:9px 12px; border-radius:8px;
+          font-size:13px; font-weight:600; cursor:pointer; border:1px solid rgba(251,191,36,0.22);
+          background:rgba(251,191,36,0.05); color:#fbbf24; font-family:inherit;
           transition:all 0.15s; width:100%; margin-bottom:8px;
         }
-        .end-day-btn:hover    { background:rgba(251,191,36,0.12); border-color:rgba(251,191,36,0.4); }
+        .end-day-btn:hover    { background:rgba(251,191,36,0.1); border-color:rgba(251,191,36,0.4); }
         .end-day-btn:disabled { opacity:0.3; cursor:not-allowed; }
 
         .history-toggle {
-          display:flex; align-items:center; gap:8px; padding:8px 10px; border-radius:7px;
+          display:flex; align-items:center; gap:8px; padding:7px 10px; border-radius:7px;
           font-size:12px; color:var(--text3); cursor:pointer; border:none; background:none;
-          text-align:left; transition:all 0.15s; width:100%; font-family:inherit;
+          text-align:left; transition:all 0.12s; width:100%; font-family:inherit;
         }
-        .history-toggle:hover { color:var(--text); background:var(--bg-chip); }
-        .history-list { display:flex; flex-direction:column; gap:2px; margin-top:4px; max-height:180px; overflow-y:auto; }
+        .history-toggle:hover { color:var(--text2); background:var(--bg-chip); }
+        .history-list { display:flex; flex-direction:column; gap:1px; margin-top:3px; max-height:160px; overflow-y:auto; }
         .history-item {
-          display:flex; align-items:center; justify-content:space-between; padding:6px 10px; border-radius:6px;
-          font-size:12px; color:var(--text3); cursor:pointer; border:none; background:none;
-          text-align:left; transition:all 0.15s; width:100%; font-family:inherit;
+          display:flex; align-items:center; justify-content:space-between; padding:5px 10px; border-radius:6px;
+          font-size:12px; color:var(--text4); cursor:pointer; border:none; background:none;
+          text-align:left; transition:all 0.12s; width:100%; font-family:inherit;
         }
-        .history-item:hover  { color:var(--text); background:var(--bg-chip); }
-        .history-item.active { color:#7dd3fc; background:var(--bg-chip); }
-        .history-badge { font-size:10px; color:var(--text4); background:var(--bg-chip2); padding:1px 6px; border-radius:10px; }
+        .history-item:hover  { color:var(--text2); background:var(--bg-chip); }
+        .history-item.active { color:var(--accent); background:var(--accent-glow); }
+        .history-badge { font-size:10px; color:var(--text5); }
 
-        .sidebar-footer { margin-top:auto; padding-top:16px; border-top:1px solid var(--border); font-size:11px; color:var(--text4); text-align:center; letter-spacing:0.04em; }
+        /* sidebar bottom — settings nav + footer count */
+        .sidebar-bottom {
+          margin-top:auto; padding-top:12px; border-top:1px solid var(--border);
+          display:flex; flex-direction:column; gap:4px;
+        }
+        .sidebar-nav-btn {
+          display:flex; align-items:center; gap:9px; width:100%; padding:8px 10px;
+          border-radius:7px; border:none; background:none; font-family:inherit;
+          font-size:13px; color:var(--text3); cursor:pointer; text-align:left;
+          transition:background 0.12s, color 0.12s;
+        }
+        .sidebar-nav-btn:hover  { color:var(--text); background:var(--bg-chip); }
+        .sidebar-nav-btn.active { color:var(--accent); background:var(--accent-glow); }
+        .sidebar-footer { font-size:11px; color:var(--text5); padding:4px 10px 2px; }
 
         /* ── MAIN ── */
         .main { flex:1; display:flex; flex-direction:column; overflow:hidden; min-width:0; }
@@ -1043,12 +1063,9 @@ export default function App() {
         .empty-state { text-align:center; padding:56px 20px; color:var(--text4); font-size:13px; letter-spacing:0.04em; }
         .empty-icon  { font-size:30px; display:block; margin-bottom:12px; opacity:0.35; }
 
-        /* ── USER CHIP ── */
-        .user-chip { display:flex; align-items:center; gap:6px; background:var(--bg-chip); border-radius:6px; padding:6px 10px; margin-bottom:16px; border:1px solid var(--border); }
-        .user-dot  { width:6px; height:6px; border-radius:50%; background:#86efac; flex-shrink:0; }
-        .user-id   { font-size:10px; color:var(--text3); letter-spacing:0.04em; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
-        .user-change-btn { background:none; border:none; color:var(--text4); cursor:pointer; font-size:11px; padding:0 2px; transition:color 0.12s; flex-shrink:0; }
-        .user-change-btn:hover { color:#7dd3fc; }
+        /* ── USER CHIP (change button) ── */
+        .user-change-btn { background:none; border:none; color:var(--text4); cursor:pointer; font-size:12px; padding:0 2px; transition:color 0.12s; flex-shrink:0; line-height:1; }
+        .user-change-btn:hover { color:var(--accent); }
 
         /* ── MIGRATION ── */
         .migrate-banner { background:rgba(125,211,252,0.06); border:1px solid rgba(125,211,252,0.15); border-radius:8px; padding:12px; margin-bottom:16px; }
@@ -1438,12 +1455,12 @@ export default function App() {
         .global-search-btn {
           display:flex; align-items:center; gap:8px; width:100%;
           background:var(--bg-chip); border:1px solid var(--border);
-          border-radius:10px; padding:9px 12px; cursor:pointer;
-          color:var(--text2); font-size:13px; font-weight:500;
-          transition:all 0.15s; margin-top:4px;
+          border-radius:8px; padding:8px 10px; cursor:pointer;
+          color:var(--text3); font-size:13px; font-weight:400;
+          transition:all 0.12s; margin-bottom:16px;
         }
-        .global-search-btn:hover { background:var(--bg-chip2); border-color:var(--border2); color:var(--text); }
-        .global-search-btn.active { background:rgba(110,168,254,0.10); border-color:var(--accent); color:var(--accent); }
+        .global-search-btn:hover { background:var(--bg-chip2); border-color:var(--border2); color:var(--text2); }
+        .global-search-btn.active { background:var(--accent-glow); border-color:var(--accent); color:var(--accent); }
         .global-search-icon { font-size:15px; opacity:0.7; }
         .global-search-kbd {
           margin-left:auto; font-size:10px; background:var(--bg-card);
@@ -1687,15 +1704,15 @@ export default function App() {
 
           <div className="progress-section">
             <div className="progress-label">
-              <span>Progress</span>
-              <span style={{ color:"#7dd3fc" }}>{progress}%</span>
+              <span>Today's progress</span>
+              <span className="progress-label-pct">{progress}%</span>
             </div>
             <div className="progress-track">
               <div className="progress-fill" style={{ width:`${progress}%` }} />
             </div>
           </div>
 
-          <div className="section-label">Filter by Status</div>
+          <div className="section-label">Filter</div>
           <div className="filter-list">
             <button className={`filter-item ${filter === "all" ? "active" : ""}`} onClick={() => setFilter("all")}>
               <span className="filter-dot" style={{ background:"var(--text4)" }} />
@@ -1713,7 +1730,7 @@ export default function App() {
 
           {sidebarHistoryKeys.length > 0 && (
             <>
-              <div className="section-label" style={{ marginTop:8 }}>History</div>
+              <div className="section-label">History</div>
               <button className="history-toggle" onClick={() => setShowHistory(v => !v)}>
                 {showHistory ? "▾" : "▸"} Past Days ({sidebarHistoryKeys.length})
               </button>
