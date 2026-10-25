@@ -186,15 +186,16 @@ async function fetchRecurring(userId) {
     .eq("user_id", userId)
     .order("created_at", { ascending: true });
   if (error) throw error;
-  return (data || []).map(r => ({ id: r.id, text: r.text, priority: r.priority, createdAt: r.created_at, enabled: r.enabled !== false, days: r.days || [0,1,2,3,4,5,6] }));
+  return (data || []).map(r => ({ id: r.id, text: r.text, priority: r.priority, createdAt: r.created_at, enabled: r.enabled !== false, days: r.days || [0,1,2,3,4,5,6], notifyTime: r.notify_time || "" }));
 }
 
 async function upsertRecurring(rec, userId) {
   const { error } = await sb.from("recurring_tasks").upsert({
     id: rec.id, user_id: userId, text: rec.text,
-    priority: rec.priority || "medium", created_at: rec.createdAt,
+    priority: rec.priority || "medium", created_at: typeof rec.createdAt === "number" ? rec.createdAt : Date.now(),
     enabled: rec.enabled !== false,
     days: rec.days || [0,1,2,3,4,5,6],
+    notify_time: rec.notifyTime || null,
   });
   if (error) throw error;
 }
@@ -281,6 +282,7 @@ export default function App() {
   const [recEditText, setRecEditText]       = useState("");
   const [recEditPrio, setRecEditPrio]       = useState("medium");
   const [recEditDays, setRecEditDays]       = useState([0,1,2,3,4,5,6]);
+  const [recNotifyTime, setRecNotifyTime]   = useState("08:00");
   // Done with remark
   const [remarkModal, setRemarkModal]       = useState(null);
   const [remarkText, setRemarkText]         = useState("");
@@ -434,13 +436,33 @@ export default function App() {
   };
 
   const scheduleRecurringReminders = () => {
-    // Clear old alarms stored in localStorage
-    const stored = JSON.parse(localStorage.getItem("taskly:notif-time") || "null");
-    const reminderTime = stored || "08:00";
-    localStorage.setItem("taskly:notif-time", reminderTime);
-    // Actual scheduling is done on page load via the service worker
-    // Here we just confirm to the user it's set up
+    if (Notification.permission !== "granted") return;
+    // Schedule a notification for each recurring task that has a notify_time set
+    const todayDay = new Date().getDay(); // 0=Sun … 6=Sat
+    recurring
+      .filter(r => r.enabled !== false && r.notifyTime)
+      .filter(r => !r.days || r.days.includes(todayDay))
+      .forEach(r => {
+        const [h, m] = r.notifyTime.split(":").map(Number);
+        const now = new Date();
+        const fire = new Date();
+        fire.setHours(h, m, 0, 0);
+        const ms = fire - now;
+        if (ms > 0) {
+          setTimeout(() => {
+            new Notification("Taskly — Recurring Task", {
+              body: r.text,
+              icon: "/icon-192.png",
+            });
+          }, ms);
+        }
+      });
   };
+
+  // Re-schedule whenever recurring list changes and permission is granted
+  useEffect(() => {
+    if (notifStatus === "granted") scheduleRecurringReminders();
+  }, [recurring, notifStatus]); // eslint-disable-line
 
   const sendTestNotif = () => {
     if (Notification.permission !== "granted") return;
@@ -2084,7 +2106,7 @@ export default function App() {
                       <div style={{ flex:1 }}>
                         <div style={{ fontSize:13, fontWeight:600, color:"var(--text)" }}>{r.text}</div>
                         <div style={{ fontSize:11, color:"var(--text4)", marginTop:2 }}>
-                          {r.days && r.days.length < 7 ? ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].filter((_,i) => r.days.includes(i)).join(", ") : "Every day"} · {r.priority}
+                          {r.days && r.days.length < 7 ? ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].filter((_,i) => r.days.includes(i)).join(", ") : "Every day"} · {r.priority}{r.notifyTime ? ` · 🔔 ${r.notifyTime}` : ""}
                         </div>
                       </div>
                       <button className={`settings-toggle ${r.enabled !== false ? "on" : "off"}`} onClick={() => {
@@ -2103,7 +2125,7 @@ export default function App() {
                         placeholder="Task name…"
                         value={recInput} onChange={e => setRecInput(e.target.value)}
                         onKeyDown={e => { if (e.key === "Enter" && recInput.trim()) {
-                          const newRec = { id: uid(), text: recInput.trim(), priority: recPriority, createdAt: new Date().toISOString(), enabled: true, days: [0,1,2,3,4,5,6] };
+                          const newRec = { id: uid(), text: recInput.trim(), priority: recPriority, createdAt: Date.now(), enabled: true, days: [0,1,2,3,4,5,6], notifyTime: recNotifyTime };
                           upsertRecurring(newRec, userId).catch(e => setError(e.message));
                           setRecurring(prev => [...prev, newRec]);
                           setRecInput(""); setShowRecurring(false);
@@ -2114,10 +2136,20 @@ export default function App() {
                           <button key={p} style={{ padding:"4px 10px", borderRadius:6, fontSize:12, cursor:"pointer", fontFamily:"inherit", border:`1px solid ${recPriority===p?"var(--accent)":"var(--border)"}`, background:recPriority===p?"var(--accent)":"transparent", color:recPriority===p?"#fff":"var(--text3)" }} onClick={() => setRecPriority(p)}>{p}</button>
                         ))}
                       </div>
+                      <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
+                        <label style={{ fontSize:11, color:"var(--text4)", whiteSpace:"nowrap" }}>🔔 Notify at</label>
+                        <input
+                          type="time"
+                          value={recNotifyTime}
+                          onChange={e => setRecNotifyTime(e.target.value)}
+                          style={{ padding:"5px 8px", borderRadius:7, border:"1px solid var(--border)", background:"var(--bg-card)", color:"var(--text)", fontFamily:"inherit", fontSize:12, outline:"none" }}
+                        />
+                        <span style={{ fontSize:11, color:"var(--text5)" }}>optional</span>
+                      </div>
                       <div style={{ display:"flex", gap:6 }}>
                         <button className="ideas-add-btn" onClick={() => {
                           if (!recInput.trim()) return;
-                          const newRec = { id: uid(), text: recInput.trim(), priority: recPriority, createdAt: new Date().toISOString(), enabled: true, days: [0,1,2,3,4,5,6] };
+                          const newRec = { id: uid(), text: recInput.trim(), priority: recPriority, createdAt: Date.now(), enabled: true, days: [0,1,2,3,4,5,6], notifyTime: recNotifyTime };
                           upsertRecurring(newRec, userId).catch(e => setError(e.message));
                           setRecurring(prev => [...prev, newRec]);
                           setRecInput(""); setShowRecurring(false);
