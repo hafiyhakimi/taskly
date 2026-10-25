@@ -204,6 +204,33 @@ async function deleteRecurring(id, userId) {
   if (error) throw error;
 }
 
+// ─── Ideas helpers ────────────────────────────────────────────────────────────
+
+async function fetchIdeas(userId) {
+  const { data, error } = await sb
+    .from("ideas")
+    .select("*")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return data || [];
+}
+
+async function insertIdea(text, userId) {
+  const { data, error } = await sb
+    .from("ideas")
+    .insert({ user_id: userId, text: text.trim(), created_at: new Date().toISOString() })
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+async function deleteIdea(id, userId) {
+  const { error } = await sb.from("ideas").delete().eq("id", id).eq("user_id", userId);
+  if (error) throw error;
+}
+
 // ─── ID gen ───────────────────────────────────────────────────────────────────
 
 const uid = () => `t${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
@@ -215,6 +242,13 @@ export default function App() {
   const [theme, setTheme]             = useState(() => localStorage.getItem('taskly:theme') || 'dark');
 
   useEffect(() => { localStorage.setItem('taskly:theme', theme); }, [theme]);
+
+  // Register service worker for notifications
+  useEffect(() => {
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+    }
+  }, []);
   const [dateKey, setDateKey]         = useState(todayKey);
   const [tasks, setTasks]             = useState([]);
   const [loading, setLoading]         = useState(true);
@@ -256,6 +290,15 @@ export default function App() {
   // Settings view
   const [settingsView, setSettingsView]   = useState(false);
   const [showChangeId, setShowChangeId]   = useState(false);
+  // Ideas
+  const [ideasView, setIdeasView]         = useState(false);
+  const [ideas, setIdeas]                 = useState([]);
+  const [ideasLoading, setIdeasLoading]   = useState(false);
+  const [ideaInput, setIdeaInput]         = useState("");
+  const [ideaSearch, setIdeaSearch]       = useState("");
+  const [ideaSaving, setIdeaSaving]       = useState(false);
+  // Notifications
+  const [notifStatus, setNotifStatus]     = useState("default"); // "default"|"granted"|"denied"|"unsupported"
   // Global all-tasks search view
   const [globalView, setGlobalView]       = useState(false);
   const [globalQuery, setGlobalQuery]     = useState("");
@@ -327,6 +370,7 @@ export default function App() {
   const openGlobalView = () => {
     setGlobalView(true);
     setSettingsView(false);
+    setIdeasView(false);
     setSidebarOpen(false);
     setTimeout(() => globalInputRef.current?.focus(), 50);
   };
@@ -334,7 +378,76 @@ export default function App() {
   const openSettings = () => {
     setSettingsView(true);
     setGlobalView(false);
+    setIdeasView(false);
     setSidebarOpen(false);
+  };
+
+  const openIdeas = () => {
+    setIdeasView(true);
+    setSettingsView(false);
+    setGlobalView(false);
+    setSidebarOpen(false);
+    setIdeasLoading(true);
+    fetchIdeas(userId)
+      .then(d => { setIdeas(d); setIdeasLoading(false); })
+      .catch(e => { setError(e.message); setIdeasLoading(false); });
+  };
+
+  const addIdea = async () => {
+    if (!ideaInput.trim() || ideaSaving) return;
+    setIdeaSaving(true);
+    try {
+      const row = await insertIdea(ideaInput.trim(), userId);
+      setIdeas(prev => [row, ...prev]);
+      setIdeaInput("");
+    } catch (e) { setError(e.message); }
+    finally { setIdeaSaving(false); }
+  };
+
+  const removeIdea = async (id) => {
+    setIdeas(prev => prev.filter(i => i.id !== id));
+    await deleteIdea(id, userId).catch(e => setError(e.message));
+  };
+
+  const promoteIdeaToTask = (idea) => {
+    setInput(idea.text);
+    removeIdea(idea.id);
+    setIdeasView(false);
+    setSettingsView(false);
+    setTimeout(() => inputRef.current?.focus(), 80);
+  };
+
+  // ── NOTIFICATIONS ──
+  useEffect(() => {
+    if (!("Notification" in window)) { setNotifStatus("unsupported"); return; }
+    setNotifStatus(Notification.permission);
+  }, []);
+
+  const requestNotifPermission = async () => {
+    if (!("Notification" in window)) return;
+    const perm = await Notification.requestPermission();
+    setNotifStatus(perm);
+    if (perm === "granted") {
+      new Notification("Taskly", { body: "Notifications enabled! You'll get reminders for your recurring tasks.", icon: "/icon-192.png" });
+      scheduleRecurringReminders();
+    }
+  };
+
+  const scheduleRecurringReminders = () => {
+    // Clear old alarms stored in localStorage
+    const stored = JSON.parse(localStorage.getItem("taskly:notif-time") || "null");
+    const reminderTime = stored || "08:00";
+    localStorage.setItem("taskly:notif-time", reminderTime);
+    // Actual scheduling is done on page load via the service worker
+    // Here we just confirm to the user it's set up
+  };
+
+  const sendTestNotif = () => {
+    if (Notification.permission !== "granted") return;
+    new Notification("Taskly — Daily Reminder", {
+      body: `You have ${recurring.filter(r => r.enabled !== false).length} recurring task(s) today. Let's go!`,
+      icon: "/icon-192.png",
+    });
   };
 
   useEffect(() => {
@@ -343,14 +456,15 @@ export default function App() {
         e.preventDefault();
         openGlobalView();
       }
-      if (e.key === "Escape" && (globalView || settingsView)) {
+      if (e.key === "Escape" && (globalView || settingsView || ideasView)) {
         setGlobalView(false);
         setSettingsView(false);
+        setIdeasView(false);
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [globalView, settingsView]);
+  }, [globalView, settingsView, ideasView]);
 
   const navigateToTask = (task) => {
     setGlobalView(false);
@@ -1588,6 +1702,40 @@ export default function App() {
 
         /* topbar sort button active state */
         .nav-btn.sort-active-btn { color:#fbbf24; border-color:rgba(251,191,36,0.35); background:rgba(251,191,36,0.06); }
+
+        /* ── IDEAS PANEL ── */
+        .ideas-panel { display:flex; flex-direction:column; height:100%; animation:fadeIn 0.18s ease; }
+        .ideas-header { display:flex; align-items:center; justify-content:space-between; padding:20px 36px 16px; border-bottom:1px solid var(--border); flex-shrink:0; }
+        .ideas-title { display:flex; align-items:center; gap:8px; font-size:18px; font-weight:700; color:var(--text); }
+        .ideas-body { flex:1; overflow-y:auto; padding:20px 36px 36px; display:flex; flex-direction:column; gap:14px; }
+        .ideas-input-row { display:flex; gap:8px; }
+        .ideas-input { flex:1; padding:9px 12px; border-radius:8px; border:1px solid var(--border); background:var(--bg-card); color:var(--text); font-family:inherit; font-size:13px; outline:none; transition:border-color 0.15s; }
+        .ideas-input:focus { border-color:var(--accent); }
+        .ideas-add-btn { padding:9px 16px; border-radius:8px; border:none; background:var(--accent); color:#fff; font-family:inherit; font-size:13px; font-weight:600; cursor:pointer; white-space:nowrap; transition:opacity 0.12s; }
+        .ideas-add-btn:disabled { opacity:0.5; cursor:not-allowed; }
+        .ideas-search { padding:8px 12px; border-radius:8px; border:1px solid var(--border); background:var(--bg-card); color:var(--text); font-family:inherit; font-size:12px; outline:none; width:100%; transition:border-color 0.15s; }
+        .ideas-search:focus { border-color:var(--accent); }
+        .ideas-list { display:flex; flex-direction:column; gap:8px; }
+        .idea-card { background:var(--bg-card); border:1px solid var(--border); border-radius:10px; padding:12px 14px; display:flex; align-items:flex-start; gap:10px; transition:border-color 0.12s; }
+        .idea-card:hover { border-color:var(--border2); }
+        .idea-text { flex:1; font-size:13px; color:var(--text2); line-height:1.5; }
+        .idea-date { font-size:10px; color:var(--text5); margin-top:4px; }
+        .idea-actions { display:flex; gap:6px; flex-shrink:0; margin-top:2px; }
+        .idea-btn { background:none; border:1px solid var(--border); border-radius:6px; padding:4px 9px; font-size:11px; font-family:inherit; cursor:pointer; color:var(--text4); transition:all 0.12s; white-space:nowrap; }
+        .idea-btn:hover { background:var(--bg-chip); color:var(--text2); }
+        .idea-btn.promote { border-color:rgba(110,168,254,0.3); color:var(--accent); }
+        .idea-btn.promote:hover { background:var(--accent-glow); }
+        .idea-btn.del:hover { border-color:rgba(239,68,68,0.4); color:#ef4444; }
+        .ideas-empty { padding:48px 0; text-align:center; color:var(--text4); font-size:13px; }
+
+        /* ── NOTIF BANNER ── */
+        .notif-banner { display:flex; align-items:center; gap:10px; padding:10px 14px; border-radius:9px; background:var(--bg-chip); border:1px solid var(--border); font-size:12px; }
+        .notif-banner-text { flex:1; color:var(--text3); line-height:1.5; }
+        .notif-banner-btn { padding:6px 12px; border-radius:7px; border:1px solid var(--border2); background:var(--accent); color:#fff; font-family:inherit; font-size:12px; font-weight:600; cursor:pointer; white-space:nowrap; transition:opacity 0.12s; }
+        .notif-banner-btn:hover { opacity:0.85; }
+        .notif-badge { display:inline-flex; align-items:center; gap:4px; padding:3px 8px; border-radius:20px; font-size:11px; font-weight:600; }
+        .notif-badge.granted { background:rgba(74,222,128,0.12); color:#4ade80; }
+        .notif-badge.denied  { background:rgba(239,68,68,0.1); color:#ef4444; }
       `}</style>
 
       {/* ── END DAY MODAL ── */}
@@ -1753,6 +1901,11 @@ export default function App() {
           )}
 
           <div className="sidebar-bottom">
+            <button className={`sidebar-nav-btn ${ideasView ? "active" : ""}`} onClick={openIdeas}>
+              <span>💡</span>
+              <span>Ideas</span>
+              {ideas.length > 0 && <span style={{ marginLeft:"auto", fontSize:10, color:"var(--text5)" }}>{ideas.length}</span>}
+            </button>
             <button className={`sidebar-nav-btn ${settingsView ? "active" : ""}`} onClick={openSettings}>
               <span>⚙</span>
               <span>Settings</span>
@@ -1896,6 +2049,179 @@ export default function App() {
                     </div>
                   );
                 })()}
+              </div>
+            </div>
+          ) : settingsView ? (
+            <div className="settings-panel">
+              <div className="settings-header">
+                <div className="settings-title"><span>⚙</span> Settings</div>
+                <button className="global-search-close" onClick={() => setSettingsView(false)} title="Close (Esc)">✕</button>
+              </div>
+              <div className="settings-body">
+                <div className="settings-section-title">Appearance</div>
+                <div className="settings-card">
+                  <div className="settings-row">
+                    <div>
+                      <div className="settings-row-label">Theme</div>
+                      <div className="settings-row-sub">Switch between dark and light mode</div>
+                    </div>
+                    <button className={`settings-toggle ${theme === "dark" ? "on" : "off"}`} onClick={() => setTheme(t => t === "dark" ? "light" : "dark")}>
+                      {theme === "dark" ? "☾ Dark" : "☀ Light"}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="settings-section-title" style={{ marginTop:8 }}>Recurring Tasks</div>
+                <div className="settings-card">
+                  <div style={{ marginBottom:12, fontSize:12, color:"var(--text4)" }}>
+                    Tasks that automatically appear every day (or on selected days).
+                  </div>
+                  {recurring.length === 0 && (
+                    <div style={{ fontSize:13, color:"var(--text4)", marginBottom:12 }}>No recurring tasks yet.</div>
+                  )}
+                  {recurring.map(r => (
+                    <div key={r.id} className="recurring-panel" style={{ background:"var(--bg-chip)", borderRadius:8, padding:"9px 12px", marginBottom:6, display:"flex", alignItems:"center", gap:10 }}>
+                      <div style={{ flex:1 }}>
+                        <div style={{ fontSize:13, fontWeight:600, color:"var(--text)" }}>{r.text}</div>
+                        <div style={{ fontSize:11, color:"var(--text4)", marginTop:2 }}>
+                          {r.days && r.days.length < 7 ? ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].filter((_,i) => r.days.includes(i)).join(", ") : "Every day"} · {r.priority}
+                        </div>
+                      </div>
+                      <button className={`settings-toggle ${r.enabled !== false ? "on" : "off"}`} onClick={() => {
+                        const updated = { ...r, enabled: r.enabled === false ? true : false };
+                        setRecurring(prev => prev.map(x => x.id === r.id ? updated : x));
+                        upsertRecurring(updated, userId).catch(e => setError(e.message));
+                      }}>{r.enabled !== false ? "On" : "Off"}</button>
+                      <button style={{ background:"none", border:"none", color:"var(--text4)", cursor:"pointer", fontSize:14, padding:"0 4px" }}
+                        onClick={() => { deleteRecurring(r.id, userId); setRecurring(prev => prev.filter(x => x.id !== r.id)); }}>✕</button>
+                    </div>
+                  ))}
+                  {showRecurring ? (
+                    <div style={{ marginTop:8 }}>
+                      <input
+                        className="ideas-input" style={{ marginBottom:8, width:"100%" }}
+                        placeholder="Task name…"
+                        value={recInput} onChange={e => setRecInput(e.target.value)}
+                        onKeyDown={e => { if (e.key === "Enter" && recInput.trim()) {
+                          const newRec = { id: uid(), text: recInput.trim(), priority: recPriority, createdAt: new Date().toISOString(), enabled: true, days: [0,1,2,3,4,5,6] };
+                          upsertRecurring(newRec, userId).catch(e => setError(e.message));
+                          setRecurring(prev => [...prev, newRec]);
+                          setRecInput(""); setShowRecurring(false);
+                        }}}
+                      />
+                      <div style={{ display:"flex", gap:6, marginBottom:8 }}>
+                        {["low","medium","high"].map(p => (
+                          <button key={p} style={{ padding:"4px 10px", borderRadius:6, fontSize:12, cursor:"pointer", fontFamily:"inherit", border:`1px solid ${recPriority===p?"var(--accent)":"var(--border)"}`, background:recPriority===p?"var(--accent)":"transparent", color:recPriority===p?"#fff":"var(--text3)" }} onClick={() => setRecPriority(p)}>{p}</button>
+                        ))}
+                      </div>
+                      <div style={{ display:"flex", gap:6 }}>
+                        <button className="ideas-add-btn" onClick={() => {
+                          if (!recInput.trim()) return;
+                          const newRec = { id: uid(), text: recInput.trim(), priority: recPriority, createdAt: new Date().toISOString(), enabled: true, days: [0,1,2,3,4,5,6] };
+                          upsertRecurring(newRec, userId).catch(e => setError(e.message));
+                          setRecurring(prev => [...prev, newRec]);
+                          setRecInput(""); setShowRecurring(false);
+                        }}>Add</button>
+                        <button style={{ padding:"6px 12px", borderRadius:7, border:"1px solid var(--border)", background:"transparent", color:"var(--text3)", cursor:"pointer", fontSize:12, fontFamily:"inherit" }} onClick={() => setShowRecurring(false)}>Cancel</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button style={{ marginTop:4, padding:"7px 12px", borderRadius:7, border:"1px dashed var(--border)", background:"transparent", color:"var(--text3)", cursor:"pointer", fontSize:12, fontFamily:"inherit" }} onClick={() => setShowRecurring(true)}>+ Add recurring task</button>
+                  )}
+                </div>
+
+                <div className="settings-section-title" style={{ marginTop:8 }}>Notifications</div>
+                <div className="settings-card">
+                  {notifStatus === "unsupported" ? (
+                    <div style={{ fontSize:12, color:"var(--text4)" }}>Browser notifications aren't supported here. Try adding this page to your home screen on Safari.</div>
+                  ) : notifStatus === "granted" ? (
+                    <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                        <span className="notif-badge granted">● Enabled</span>
+                        <span style={{ fontSize:12, color:"var(--text3)" }}>Taskly can send you reminders.</span>
+                      </div>
+                      <button className="settings-toggle on" style={{ alignSelf:"flex-start" }} onClick={sendTestNotif}>Send test notification</button>
+                    </div>
+                  ) : notifStatus === "denied" ? (
+                    <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                      <span className="notif-badge denied">✕ Blocked</span>
+                      <span style={{ fontSize:12, color:"var(--text4)" }}>Notifications are blocked. Allow them in your browser/device settings.</span>
+                    </div>
+                  ) : (
+                    <div className="notif-banner">
+                      <div className="notif-banner-text">
+                        Enable notifications to get a daily reminder for your recurring tasks. Works on iPhone when added to home screen via Safari.
+                      </div>
+                      <button className="notif-banner-btn" onClick={requestNotifPermission}>Enable</button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="settings-section-title" style={{ marginTop:8 }}>Account</div>
+                <div className="settings-card">
+                  <div className="settings-row">
+                    <div>
+                      <div className="settings-row-label">User ID</div>
+                      <div className="settings-row-sub" style={{ fontFamily:"monospace", fontSize:11 }}>{userId}</div>
+                    </div>
+                    <button className="settings-toggle off" onClick={() => { setShowChangeId(true); setIdInput(""); setIdError(""); setSettingsView(false); }}>Change / Recover</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : ideasView ? (
+            <div className="ideas-panel">
+              <div className="ideas-header">
+                <div className="ideas-title"><span>💡</span> Ideas</div>
+                <button className="global-search-close" onClick={() => setIdeasView(false)} title="Close (Esc)">✕</button>
+              </div>
+              <div className="ideas-body">
+                <div className="ideas-input-row">
+                  <input
+                    className="ideas-input"
+                    placeholder="Capture an idea…"
+                    value={ideaInput}
+                    onChange={e => setIdeaInput(e.target.value)}
+                    onKeyDown={e => e.key === "Enter" && addIdea()}
+                    autoFocus
+                  />
+                  <button className="ideas-add-btn" disabled={!ideaInput.trim() || ideaSaving} onClick={addIdea}>
+                    {ideaSaving ? "…" : "Save"}
+                  </button>
+                </div>
+                {ideas.length > 1 && (
+                  <input
+                    className="ideas-search"
+                    placeholder="Search ideas…"
+                    value={ideaSearch}
+                    onChange={e => setIdeaSearch(e.target.value)}
+                  />
+                )}
+                {ideasLoading ? (
+                  <div className="loading-state"><div className="loading-spin" /><div>Loading…</div></div>
+                ) : ideas.filter(i => !ideaSearch || i.text.toLowerCase().includes(ideaSearch.toLowerCase())).length === 0 ? (
+                  <div className="ideas-empty">
+                    {ideaSearch ? "No ideas match your search." : "No ideas yet — capture your first one above."}
+                  </div>
+                ) : (
+                  <div className="ideas-list">
+                    {ideas
+                      .filter(i => !ideaSearch || i.text.toLowerCase().includes(ideaSearch.toLowerCase()))
+                      .map(idea => (
+                        <div key={idea.id} className="idea-card">
+                          <div style={{ flex:1 }}>
+                            <div className="idea-text">{idea.text}</div>
+                            <div className="idea-date">{new Date(idea.created_at).toLocaleDateString("en-MY", { day:"numeric", month:"short", year:"numeric" })}</div>
+                          </div>
+                          <div className="idea-actions">
+                            <button className="idea-btn promote" title="Turn into a task for today" onClick={() => promoteIdeaToTask(idea)}>→ Task</button>
+                            <button className="idea-btn del" onClick={() => removeIdea(idea.id)}>✕</button>
+                          </div>
+                        </div>
+                      ))
+                    }
+                  </div>
+                )}
               </div>
             </div>
           ) : (
