@@ -299,6 +299,9 @@ export default function App() {
   const [ideaInput, setIdeaInput]         = useState("");
   const [ideaSearch, setIdeaSearch]       = useState("");
   const [ideaSaving, setIdeaSaving]       = useState(false);
+  // Scheduled task date picker
+  const [scheduleDate, setScheduleDate]   = useState(todayKey);
+  const [showSchedule, setShowSchedule]   = useState(false);
   // Notifications
   const [notifStatus, setNotifStatus]     = useState("default"); // "default"|"granted"|"denied"|"unsupported"
   // Global all-tasks search view
@@ -369,6 +372,21 @@ export default function App() {
     return () => clearTimeout(t);
   }, [globalQuery, globalView, userId]);
 
+  // Close all panels and navigate to a date
+  const goToDate = (dk) => {
+    setDateKey(dk);
+    setGlobalView(false);
+    setSettingsView(false);
+    setIdeasView(false);
+  };
+
+  // Close all panels and return to task list
+  const goToTasks = () => {
+    setGlobalView(false);
+    setSettingsView(false);
+    setIdeasView(false);
+  };
+
   const openGlobalView = () => {
     setGlobalView(true);
     setSettingsView(false);
@@ -431,38 +449,56 @@ export default function App() {
     setNotifStatus(perm);
     if (perm === "granted") {
       new Notification("Taskly", { body: "Notifications enabled! You'll get reminders for your recurring tasks.", icon: "/icon-192.png" });
-      scheduleRecurringReminders();
+      checkAndFireNotifications();
     }
   };
 
-  const scheduleRecurringReminders = () => {
+  // Polling-based notification checker — reliable on mobile/Safari
+  // Fires on mount, visibility change, window focus, and every 60s
+  const NOTIF_KEY = "taskly:notif-fired";
+  const getFiredMap = () => { try { return JSON.parse(localStorage.getItem(NOTIF_KEY) || "{}"); } catch { return {}; } };
+
+  const checkAndFireNotifications = useCallback(() => {
     if (Notification.permission !== "granted") return;
-    // Schedule a notification for each recurring task that has a notify_time set
-    const todayDay = new Date().getDay(); // 0=Sun … 6=Sat
+    const today = todayKey();
+    const todayDay = new Date().getDay();
+    const now = new Date();
+    const fired = getFiredMap();
+    // Keep only today's fired keys
+    const pruned = {};
+    Object.keys(fired).forEach(k => { if (k.startsWith(today)) pruned[k] = true; });
+    let changed = false;
     recurring
       .filter(r => r.enabled !== false && r.notifyTime)
       .filter(r => !r.days || r.days.includes(todayDay))
       .forEach(r => {
+        const key = `${today}:${r.id}`;
+        if (pruned[key]) return;
         const [h, m] = r.notifyTime.split(":").map(Number);
-        const now = new Date();
-        const fire = new Date();
-        fire.setHours(h, m, 0, 0);
-        const ms = fire - now;
-        if (ms > 0) {
-          setTimeout(() => {
-            new Notification("Taskly — Recurring Task", {
-              body: r.text,
-              icon: "/icon-192.png",
-            });
-          }, ms);
+        const fireTime = new Date(); fireTime.setHours(h, m, 0, 0);
+        const diffMs = now - fireTime;
+        // Fire if past the time but within 30-minute grace window
+        if (diffMs >= 0 && diffMs < 30 * 60 * 1000) {
+          new Notification("Taskly — Recurring Task", { body: r.text, icon: "/icon-192.png" });
+          pruned[key] = true;
+          changed = true;
         }
       });
-  };
+    if (changed) localStorage.setItem(NOTIF_KEY, JSON.stringify(pruned));
+  }, [recurring]);
 
-  // Re-schedule whenever recurring list changes and permission is granted
   useEffect(() => {
-    if (notifStatus === "granted") scheduleRecurringReminders();
-  }, [recurring, notifStatus]); // eslint-disable-line
+    checkAndFireNotifications();
+    const onVisible = () => { if (document.visibilityState === "visible") checkAndFireNotifications(); };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", checkAndFireNotifications);
+    const interval = setInterval(checkAndFireNotifications, 60_000);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", checkAndFireNotifications);
+      clearInterval(interval);
+    };
+  }, [checkAndFireNotifications]);
 
   const sendTestNotif = () => {
     if (Notification.permission !== "granted") return;
@@ -489,9 +525,7 @@ export default function App() {
   }, [globalView, settingsView, ideasView]);
 
   const navigateToTask = (task) => {
-    setGlobalView(false);
-    setDateKey(task.dateKey);
-    // highlight after the day loads
+    goToDate(task.dateKey);
     setTimeout(() => scrollToTask(task.id), 400);
   };
 
@@ -629,7 +663,7 @@ export default function App() {
     try { await upsertRecurring(rec, userId); }
     catch (e) { setError(e.message); setRecurring(p => p.filter(r => r.id !== rec.id)); }
   };
-  
+
   const saveRecurringEdit = async (id) => {
     const text = recEditText.trim();
     if (!text) { setRecEditId(null); return; }
@@ -656,17 +690,22 @@ export default function App() {
   const add = async () => {
     const text = input.trim();
     if (!text || isReadOnly) { inputRef.current?.focus(); return; }
+    const targetDate = scheduleDate || dateKey;
+    const isFuture = targetDate !== dateKey;
     const task = { id: uid(), text, status: "todo", priority, createdAt: Date.now() };
-    setTasks(p => [task, ...p]);
+    if (!isFuture) setTasks(p => [task, ...p]);
     setInput("");
     setPriority("medium");
+    setShowSchedule(false);
+    setScheduleDate(todayKey());
     setSaving(true);
     try {
-      await upsertTask(task, dateKey, userId);
+      await upsertTask(task, targetDate, userId);
       refreshHistory();
+      if (isFuture) goToDate(targetDate);
     } catch (e) {
       setError(e.message);
-      setTasks(p => p.filter(t => t.id !== task.id)); // rollback
+      if (!isFuture) setTasks(p => p.filter(t => t.id !== task.id)); // rollback
     } finally { setSaving(false); }
   };
 
@@ -1082,6 +1121,32 @@ export default function App() {
         .add-btn:hover    { transform:translateY(-1px); box-shadow:0 5px 18px rgba(110,168,254,0.4); }
         .add-btn:active   { transform:translateY(0); }
         .add-btn:disabled { opacity:0.35; cursor:not-allowed; transform:none; box-shadow:none; }
+
+        .schedule-btn {
+          background:var(--bg-chip); border:1px solid var(--border); border-radius:8px;
+          padding:0 10px; height:40px; font-size:16px; cursor:pointer; transition:all 0.18s;
+          display:flex; align-items:center; justify-content:center; flex-shrink:0;
+        }
+        .schedule-btn:hover    { border-color:var(--border2); background:var(--bg-chip2); }
+        .schedule-btn.active   { border-color:#6ea8fe; background:rgba(110,168,254,0.08); }
+        .schedule-btn.scheduled { border-color:#a78bfa; background:rgba(167,139,250,0.12); }
+        .schedule-btn:disabled { opacity:0.35; cursor:not-allowed; }
+        .schedule-row {
+          display:flex; align-items:center; gap:8px; padding:0 36px 10px; flex-shrink:0;
+        }
+        .schedule-label { font-size:12px; color:var(--text4); white-space:nowrap; }
+        .schedule-date-input {
+          padding:5px 10px; border-radius:7px; border:1px solid var(--border);
+          background:var(--bg-chip); color:var(--text); font-family:inherit; font-size:12px;
+          outline:none; cursor:pointer; transition:border-color 0.15s;
+        }
+        .schedule-date-input:focus { border-color:#6ea8fe; }
+        .schedule-clear {
+          padding:4px 10px; border-radius:6px; border:1px solid var(--border);
+          background:transparent; color:var(--text4); font-family:inherit; font-size:11px;
+          cursor:pointer; transition:all 0.15s;
+        }
+        .schedule-clear:hover { border-color:#f87171; color:#f87171; }
 
         .readonly-banner {
           display:flex; align-items:center; gap:8px; padding:8px 36px;
@@ -1907,12 +1972,12 @@ export default function App() {
               {showHistory && (
                 <div className="history-list">
                   {!isToday && (
-                    <button className="history-item" onClick={() => setDateKey(todayKey())}>
+                    <button className="history-item" onClick={() => goToDate(todayKey())}>
                       Today <span className="history-badge">now</span>
                     </button>
                   )}
                   {sidebarHistoryKeys.map(k => (
-                    <button key={k} className={`history-item ${dateKey === k ? "active" : ""}`} onClick={() => setDateKey(k)}>
+                    <button key={k} className={`history-item ${dateKey === k ? "active" : ""}`} onClick={() => goToDate(k)}>
                       {new Date(k + "T00:00:00").toLocaleDateString("en-US", { month:"short", day:"numeric" })}
                       <span className="history-badge">{k}</span>
                     </button>
@@ -1923,6 +1988,10 @@ export default function App() {
           )}
 
           <div className="sidebar-bottom">
+            <button className={`sidebar-nav-btn ${!settingsView && !ideasView && !globalView ? "active" : ""}`} onClick={goToTasks}>
+              <span>✓</span>
+              <span>Tasks</span>
+            </button>
             <button className={`sidebar-nav-btn ${ideasView ? "active" : ""}`} onClick={openIdeas}>
               <span>💡</span>
               <span>Ideas</span>
@@ -1967,10 +2036,10 @@ export default function App() {
                     type="date"
                     className="date-picker"
                     value={dateKey}
-                    onChange={e => e.target.value && setDateKey(e.target.value)}
+                    onChange={e => e.target.value && goToDate(e.target.value)}
                   />
                   {!isToday && (
-                    <button className="nav-btn today-btn" onClick={() => setDateKey(todayKey())}>
+                    <button className="nav-btn today-btn" onClick={() => goToDate(todayKey())}>
                       Back to Today
                     </button>
                   )}
@@ -2285,8 +2354,31 @@ export default function App() {
                 <option key={p.key} value={p.key} style={{ color:p.color }}>{p.label} Priority</option>
               ))}
             </select>
+            <button
+              className={`schedule-btn${showSchedule ? " active" : ""}${scheduleDate !== todayKey() ? " scheduled" : ""}`}
+              disabled={isReadOnly || loading}
+              title={scheduleDate !== todayKey() ? `Scheduled for ${scheduleDate}` : "Schedule for a future date"}
+              onClick={() => setShowSchedule(s => !s)}
+            >📅</button>
             <button className="add-btn" disabled={isReadOnly || loading} onClick={add}>+ Add Task</button>
           </div>
+          {showSchedule && !isReadOnly && (
+            <div className="schedule-row">
+              <span className="schedule-label">Schedule for:</span>
+              <input
+                type="date"
+                className="schedule-date-input"
+                value={scheduleDate}
+                min={todayKey()}
+                onChange={e => setScheduleDate(e.target.value)}
+              />
+              {scheduleDate !== todayKey() && (
+                <button className="schedule-clear" onClick={() => { setScheduleDate(todayKey()); setShowSchedule(false); }}>
+                  Clear
+                </button>
+              )}
+            </div>
+          )}
 
           <div className="task-area">
             {loading ? (
