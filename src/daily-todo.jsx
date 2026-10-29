@@ -629,7 +629,7 @@ export default function App() {
     try { await upsertRecurring(rec, userId); }
     catch (e) { setError(e.message); setRecurring(p => p.filter(r => r.id !== rec.id)); }
   };
-
+  
   const saveRecurringEdit = async (id) => {
     const text = recEditText.trim();
     if (!text) { setRecEditId(null); return; }
