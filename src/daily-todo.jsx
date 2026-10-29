@@ -1039,10 +1039,10 @@ export default function App() {
         .history-item.active { color:var(--accent); background:var(--accent-glow); }
         .history-badge { font-size:10px; color:var(--text5); }
 
-        /* sidebar bottom — settings nav + footer count */
-        .sidebar-bottom {
-          margin-top:auto; padding-top:12px; border-top:1px solid var(--border);
-          display:flex; flex-direction:column; gap:4px;
+        /* ── SIDEBAR NAV ── */
+        .sidebar-nav {
+          display:flex; flex-direction:column; gap:2px; margin-bottom:16px;
+          padding-bottom:14px; border-bottom:1px solid var(--border);
         }
         .sidebar-nav-btn {
           display:flex; align-items:center; gap:9px; width:100%; padding:8px 10px;
@@ -1051,8 +1051,21 @@ export default function App() {
           transition:background 0.12s, color 0.12s;
         }
         .sidebar-nav-btn:hover  { color:var(--text); background:var(--bg-chip); }
-        .sidebar-nav-btn.active { color:var(--accent); background:var(--accent-glow); }
-        .sidebar-footer { font-size:11px; color:var(--text5); padding:4px 10px 2px; }
+        .sidebar-nav-btn.active { color:var(--accent); background:var(--accent-glow); font-weight:600; }
+        .sidebar-nav-count {
+          margin-left:auto; font-size:10px; color:var(--text5);
+          background:var(--bg-chip2); padding:1px 6px; border-radius:10px;
+        }
+        .sidebar-nav-btn.active .sidebar-nav-count { color:var(--accent); background:var(--accent-glow); }
+
+        /* Tasks-only context panel */
+        .sidebar-tasks-ctx { display:flex; flex-direction:column; flex:1; min-height:0; overflow-y:auto; }
+
+        .sidebar-footer {
+          margin-top:auto; padding:10px 10px 6px;
+          font-size:11px; color:var(--text5); border-top:1px solid var(--border);
+          flex-shrink:0;
+        }
 
         /* ── MAIN ── */
         .main { flex:1; display:flex; flex-direction:column; overflow:hidden; min-width:0; }
@@ -1930,80 +1943,89 @@ export default function App() {
             <div className="migrate-success" style={{ color:"#475569" }}>No local tasks found to import.</div>
           )}
 
-          {/* All Tasks search */}
-          <button className={`global-search-btn ${globalView ? "active" : ""}`} onClick={openGlobalView}>
-            <span className="global-search-icon">⌕</span>
-            <span>Search All Tasks</span>
-            <span className="global-search-kbd">⌘K</span>
-          </button>
-
-          <div className="progress-section">
-            <div className="progress-label">
-              <span>Today's progress</span>
-              <span className="progress-label-pct">{progress}%</span>
-            </div>
-            <div className="progress-track">
-              <div className="progress-fill" style={{ width:`${progress}%` }} />
-            </div>
-          </div>
-
-          <div className="section-label">Filter</div>
-          <div className="filter-list">
-            <button className={`filter-item ${filter === "all" ? "active" : ""}`} onClick={() => setFilter("all")}>
-              <span className="filter-dot" style={{ background:"var(--text4)" }} />
-              All tasks
-              <span className="filter-count">{tasks.length}</span>
-            </button>
-            {STATUSES.map(s => (
-              <button key={s.key} className={`filter-item ${filter === s.key ? "active" : ""}`} onClick={() => setFilter(s.key)}>
-                <span className="filter-dot" style={{ background:s.color }} />
-                {s.label}
-                <span className="filter-count">{counts[s.key]}</span>
-              </button>
-            ))}
-          </div>
-
-          {sidebarHistoryKeys.length > 0 && (
-            <>
-              <div className="section-label">History</div>
-              <button className="history-toggle" onClick={() => setShowHistory(v => !v)}>
-                {showHistory ? "▾" : "▸"} Past Days ({sidebarHistoryKeys.length})
-              </button>
-              {showHistory && (
-                <div className="history-list">
-                  {!isToday && (
-                    <button className="history-item" onClick={() => goToDate(todayKey())}>
-                      Today <span className="history-badge">now</span>
-                    </button>
-                  )}
-                  {sidebarHistoryKeys.map(k => (
-                    <button key={k} className={`history-item ${dateKey === k ? "active" : ""}`} onClick={() => goToDate(k)}>
-                      {new Date(k + "T00:00:00").toLocaleDateString("en-US", { month:"short", day:"numeric" })}
-                      <span className="history-badge">{k}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </>
-          )}
-
-          <div className="sidebar-bottom">
+          {/* ── SIDEBAR NAV ── always visible */}
+          <div className="sidebar-nav">
             <button className={`sidebar-nav-btn ${!settingsView && !ideasView && !globalView ? "active" : ""}`} onClick={goToTasks}>
               <span>✓</span>
               <span>Tasks</span>
+              {!settingsView && !ideasView && !globalView && tasks.length > 0 && (
+                <span className="sidebar-nav-count">{counts.done}/{tasks.length}</span>
+              )}
             </button>
             <button className={`sidebar-nav-btn ${ideasView ? "active" : ""}`} onClick={openIdeas}>
               <span>💡</span>
               <span>Ideas</span>
-              {ideas.length > 0 && <span style={{ marginLeft:"auto", fontSize:10, color:"var(--text5)" }}>{ideas.length}</span>}
+              {ideas.length > 0 && <span className="sidebar-nav-count">{ideas.length}</span>}
             </button>
             <button className={`sidebar-nav-btn ${settingsView ? "active" : ""}`} onClick={openSettings}>
               <span>⚙</span>
               <span>Settings</span>
             </button>
-            <div className="sidebar-footer">
-              {loading ? "Loading..." : tasks.length === 0 ? "No tasks yet" : `${counts.done} / ${tasks.length} done`}
+          </div>
+
+          {/* ── TASKS CONTEXT — only shown when on task view ── */}
+          {!settingsView && !ideasView && !globalView && (
+            <div className="sidebar-tasks-ctx">
+              <button className={`global-search-btn ${globalView ? "active" : ""}`} onClick={openGlobalView}>
+                <span className="global-search-icon">⌕</span>
+                <span>Search All Tasks</span>
+                <span className="global-search-kbd">⌘K</span>
+              </button>
+
+              <div className="progress-section">
+                <div className="progress-label">
+                  <span>Today's progress</span>
+                  <span className="progress-label-pct">{progress}%</span>
+                </div>
+                <div className="progress-track">
+                  <div className="progress-fill" style={{ width:`${progress}%` }} />
+                </div>
+              </div>
+
+              <div className="section-label">Filter</div>
+              <div className="filter-list">
+                <button className={`filter-item ${filter === "all" ? "active" : ""}`} onClick={() => setFilter("all")}>
+                  <span className="filter-dot" style={{ background:"var(--text4)" }} />
+                  All tasks
+                  <span className="filter-count">{tasks.length}</span>
+                </button>
+                {STATUSES.map(s => (
+                  <button key={s.key} className={`filter-item ${filter === s.key ? "active" : ""}`} onClick={() => setFilter(s.key)}>
+                    <span className="filter-dot" style={{ background:s.color }} />
+                    {s.label}
+                    <span className="filter-count">{counts[s.key]}</span>
+                  </button>
+                ))}
+              </div>
+
+              {sidebarHistoryKeys.length > 0 && (
+                <>
+                  <div className="section-label">History</div>
+                  <button className="history-toggle" onClick={() => setShowHistory(v => !v)}>
+                    {showHistory ? "▾" : "▸"} Past Days ({sidebarHistoryKeys.length})
+                  </button>
+                  {showHistory && (
+                    <div className="history-list">
+                      {!isToday && (
+                        <button className="history-item" onClick={() => goToDate(todayKey())}>
+                          Today <span className="history-badge">now</span>
+                        </button>
+                      )}
+                      {sidebarHistoryKeys.map(k => (
+                        <button key={k} className={`history-item ${dateKey === k ? "active" : ""}`} onClick={() => goToDate(k)}>
+                          {new Date(k + "T00:00:00").toLocaleDateString("en-US", { month:"short", day:"numeric" })}
+                          <span className="history-badge">{k}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
             </div>
+          )}
+
+          <div className="sidebar-footer">
+            {loading ? "Loading..." : isToday ? `Today · ${new Date().toLocaleDateString("en-US",{month:"short",day:"numeric"})}` : dateKey}
           </div>
         </aside>
 
